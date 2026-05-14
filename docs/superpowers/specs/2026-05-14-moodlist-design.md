@@ -190,7 +190,7 @@ Alfred Action (next step):
   `library_version`: a reindex that changes the compact representation
   produces a new version, and old rows are no longer returned. They are not
   purged from disk (cheap to keep; useful for stats).
-- `--fresh` flag (Alfred prefix `mp!`): bypass `lookup`, force a new agent
+- `--fresh` flag (Alfred prefix `moodlist!`): bypass `lookup`, force a new agent
   call, then `store` (overwriting the row for the same hash).
 
 ### 5.3 Agent call (`agent.py`)
@@ -308,7 +308,7 @@ fallbacks.
 | Anthropic API transient (5xx, network) | One retry with backoff; then surface error to Alfred |
 | LLM returns unparseable JSON | Surface "model returned malformed JSON"; log raw response |
 | LLM returns 0 valid IDs | Surface "couldn't pick any tracks for this query"; don't open foobar |
-| Library empty | Suggest `mp-reindex` in Alfred subtitle |
+| Library empty | Suggest `moodlist-reindex` in Alfred subtitle |
 | Library reindex fails (permissions, corrupt file) | Skip the bad file, log, continue |
 | foobar2000 not installed | Detect at config-load; one-time error message |
 | `needs_live=true` from agent | Alfred: "Live chart data not available in v1. Want all-time instead?" |
