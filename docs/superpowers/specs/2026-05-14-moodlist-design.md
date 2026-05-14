@@ -1,8 +1,9 @@
 # moodlist — Design Spec
 
+**Version:** 1.0
 **Date:** 2026-05-14
-**Status:** Draft for review
-**Author:** Claude + user (collaborative brainstorm)
+**Status:** Approved — locked for implementation
+**Author:** myorek (with assistant collaboration during brainstorm)
 
 ## 1. Problem
 
