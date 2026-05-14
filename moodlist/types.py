@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -30,3 +30,5 @@ class AgentResult:
     reasoning: str
     wanted_but_missing: list[str]
     needs_live: bool
+    raw_picks: list[int] = field(default_factory=list)
+    pick_reasons: dict[int, str] = field(default_factory=dict)
