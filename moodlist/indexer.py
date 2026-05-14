@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -65,9 +67,30 @@ class Indexer:
                 )
                 n += 1
             conn.commit()
-            return n
         finally:
             conn.close()
+        self._write_compact_artifacts()
+        return n
+
+    def _write_compact_artifacts(self) -> None:
+        compact = self.load_compact()
+        text = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
+        (self.moodlist_dir / "library.cache.json").write_text(text)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        (self.moodlist_dir / "library.version").write_text(digest)
+
+    def library_version(self) -> str:
+        return (self.moodlist_dir / "library.version").read_text().strip()
+
+    def is_stale(self) -> bool:
+        cache = self.moodlist_dir / "library.cache.json"
+        if not cache.exists():
+            return True
+        cache_mtime = cache.stat().st_mtime
+        for sub in self.library_root.iterdir():
+            if sub.is_dir() and sub.stat().st_mtime > cache_mtime:
+                return True
+        return False
 
     def load_compact(self) -> list[dict]:
         if not self.db_path.exists():
