@@ -126,3 +126,97 @@ def test_needs_live_branch_emits_helpful_alfred_message(temp_home, tmp_path,
     out = json.loads(capsys.readouterr().out)
     assert out["items"][0]["valid"] is False
     assert "live" in out["items"][0]["title"].lower()
+
+
+def test_debug_flag_prints_sections_to_stderr(temp_home, tmp_path,
+                                                mocker, capsys):
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="picked classics",
+        wanted_but_missing=["Led Zeppelin - Stairway"],
+        needs_live=False,
+        raw_picks=[1, 2],
+        pick_reasons={1: "first", 2: "second"},
+    ))
+    mocker.patch("moodlist.writer.open_in_foobar")
+
+    exit_code = cli.main(["top rock", "--debug", "--dry-run"])
+    assert exit_code == 0
+    err = capsys.readouterr().err
+    for marker in [
+        "=== config ===",
+        "=== library context ===",
+        "=== query ===",
+        "=== prompt ===",
+        "=== haiku call ===",
+        "=== haiku response ===",
+        "=== validation ===",
+        "=== output ===",
+    ]:
+        assert marker in err, f"missing diagnostic section: {marker}"
+    # Per-track reasons should be visible
+    assert "first" in err
+    assert "second" in err
+    # wanted_but_missing should be visible
+    assert "Led Zeppelin" in err
+
+
+def test_debug_flag_keeps_stdout_clean_for_alfred(temp_home, tmp_path,
+                                                   mocker, capsys):
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="r",
+        wanted_but_missing=[],
+        needs_live=False,
+        raw_picks=[1, 2],
+        pick_reasons={},
+    ))
+
+    cli.main(["top rock", "--debug", "--alfred-json"])
+    out = capsys.readouterr().out
+    # Stdout must be parseable JSON, not mixed with debug sections
+    parsed = json.loads(out)
+    assert "items" in parsed
+    assert parsed["items"][0]["arg"].endswith(".m3u8")
+
+
+def test_debug_flag_passes_debug_true_to_agent(temp_home, tmp_path,
+                                                mocker, capsys):
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    pick_mock = mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="r",
+        wanted_but_missing=[],
+        needs_live=False,
+        raw_picks=[1, 2],
+        pick_reasons={},
+    ))
+
+    cli.main(["top rock", "--debug", "--dry-run"])
+    pick_mock.assert_called_once()
+    assert pick_mock.call_args.kwargs.get("debug") is True
+
+
+def test_no_debug_flag_passes_debug_false_to_agent(temp_home, tmp_path,
+                                                    mocker, capsys):
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    pick_mock = mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="r",
+        wanted_but_missing=[],
+        needs_live=False,
+        raw_picks=[1, 2],
+        pick_reasons={},
+    ))
+
+    cli.main(["another query", "--dry-run"])
+    pick_mock.assert_called_once()
+    # debug should be False (or absent — both acceptable)
+    debug_arg = pick_mock.call_args.kwargs.get("debug", False)
+    assert debug_arg is False
