@@ -16,7 +16,7 @@ query is asked again.
 
 ## 2. Goals
 
-- Free-form natural-language input via Alfred (`mp <query>`).
+- Free-form natural-language input via Alfred (`moodlist <query>`).
 - Open the resulting playlist in foobar2000 with one keystroke.
 - Pick tracks that actually exist in the local library (no hallucinated
   song names).
@@ -106,7 +106,7 @@ data crosses boundaries via plain dicts / dataclasses.
 
 ### 4.3 End-to-end data flow
 
-`mp top 80s metal` (typed into Alfred):
+`moodlist top 80s metal` (typed into Alfred):
 
 ```
 Alfred Script Filter
@@ -288,14 +288,14 @@ Alfred (no playlist opens).
   - `--reindex` — force a full library reindex before answering.
   - `--count N` — override default playlist length (default 20).
   - `--dry-run` — print picks, don't write file or open foobar.
-- The Alfred workflow has **one keyword** (`mp`) with two variants resolved
-  by argument prefix:
-  - `mp <query>` → `moodlist "<query>" --alfred-json`
-  - `mp! <query>` → `moodlist "<query>" --alfred-json --fresh`
+- The Alfred workflow has **one keyword** (`moodlist`) with two variants
+  resolved by argument prefix:
+  - `moodlist <query>` → `moodlist "<query>" --alfred-json`
+  - `moodlist! <query>` → `moodlist "<query>" --alfred-json --fresh`
 - Alfred displays the title/subtitle from the JSON. Pressing Enter triggers
   a follow-on `Open File` action with the `arg` (the m3u8 path).
-- A separate Alfred keyword `mp-reindex` runs `moodlist --reindex` and
-  reports the new track count.
+- A separate Alfred keyword `moodlist-reindex` runs `moodlist --reindex`
+  and reports the new track count.
 
 ## 6. Error handling
 
@@ -367,7 +367,7 @@ None. All decisions resolved during the brainstorming session of 2026-05-14.
 - **2026-05-14** — show all versions to LLM; let it pick studio over demo.
 - **2026-05-14** — temperature 0.4 + date salt for slight variety.
 - **2026-05-14** — Alfred shows preview with track count, then Enter opens foobar.
-- **2026-05-14** — cache never expires; `--fresh` (`mp!` prefix) overrides.
+- **2026-05-14** — cache never expires; `--fresh` (`moodlist!` prefix) overrides.
 - **2026-05-14** — playlist naming `YYYY-<slug>.m3u8`, overwrite on same-year
   same-query collision.
 - **2026-05-14** — code at `~/projects/moodlist/`, local git only; runtime
