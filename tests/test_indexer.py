@@ -101,3 +101,17 @@ def test_library_cache_json_is_written(temp_home, sample_flac, tmp_path):
     ix.build()
     payload = json.loads((temp_home / "library.cache.json").read_text())
     assert payload[0]["artist"] == "A"
+
+
+def test_is_stale_returns_true_when_library_root_missing(temp_home, sample_flac, tmp_path):
+    music = tmp_path / "Music"
+    music.mkdir()
+    _tagged_flac(sample_flac, music / "a.flac",
+                 artist="A", title="A1", date="2000")
+    ix = Indexer(library_root=music, moodlist_dir=temp_home)
+    ix.build()
+    assert ix.is_stale() is False
+
+    import shutil
+    shutil.rmtree(music)
+    assert ix.is_stale() is True

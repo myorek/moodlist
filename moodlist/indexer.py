@@ -75,16 +75,20 @@ class Indexer:
     def _write_compact_artifacts(self) -> None:
         compact = self.load_compact()
         text = json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
-        (self.moodlist_dir / "library.cache.json").write_text(text)
+        (self.moodlist_dir / "library.cache.json").write_text(text, encoding="utf-8")
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
-        (self.moodlist_dir / "library.version").write_text(digest)
+        (self.moodlist_dir / "library.version").write_text(digest, encoding="utf-8")
 
     def library_version(self) -> str:
-        return (self.moodlist_dir / "library.version").read_text().strip()
+        return (self.moodlist_dir / "library.version").read_text(encoding="utf-8").strip()
 
     def is_stale(self) -> bool:
+        """Return True if cache is absent or any first-level subdirectory
+        is newer than the cache. Does NOT detect in-place file edits."""
         cache = self.moodlist_dir / "library.cache.json"
         if not cache.exists():
+            return True
+        if not self.library_root.exists():
             return True
         cache_mtime = cache.stat().st_mtime
         for sub in self.library_root.iterdir():
