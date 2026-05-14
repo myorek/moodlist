@@ -5,8 +5,7 @@ description = "Mood-based playlist builder for foobar2000"
 requires-python = ">=3.12"
 dependencies = [
     "mutagen>=1.47",
-    "anthropic>=0.40",
-    "tomli; python_version < '3.11'",
+    "anthropic>=0.90",
 ]
 
 [project.optional-dependencies]
@@ -32,3 +31,7 @@ addopts = "-ra -q --strict-markers"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = []
