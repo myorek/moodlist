@@ -78,3 +78,101 @@ def test_user_blocks_say_default_count_not_desired_count():
     query_text = blocks[1]["text"]
     assert "Default count: 20" in query_text
     assert "Desired count" not in query_text
+
+
+def test_pick_in_debug_mode_appends_suffix_to_system_prompt(mocker):
+    from moodlist.agent import pick
+    captured = {}
+
+    def fake_llm_call(**kwargs):
+        captured.update(kwargs)
+        return {
+            "picks": [1],
+            "reasoning": "r",
+            "wanted_but_missing": [],
+            "needs_live": False,
+            "pick_reasons": {"1": "because"},
+        }
+
+    mocker.patch("moodlist.agent.llm.call", side_effect=fake_llm_call)
+    pick(
+        query="q",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-14",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+        debug=True,
+    )
+    assert "DIAGNOSTIC MODE" in captured["system"]
+
+
+def test_pick_in_debug_mode_parses_pick_reasons(mocker):
+    from moodlist.agent import pick
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 2],
+        "reasoning": "overall",
+        "wanted_but_missing": [],
+        "needs_live": False,
+        "pick_reasons": {"1": "first reason", "2": "second reason"},
+    })
+    result = pick(
+        query="q",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-14",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+        debug=True,
+    )
+    assert result.pick_reasons == {1: "first reason", 2: "second reason"}
+    assert result.raw_picks == [1, 2]
+
+
+def test_pick_in_normal_mode_ignores_pick_reasons_field(mocker):
+    from moodlist.agent import pick
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 2],
+        "reasoning": "r",
+        "wanted_but_missing": [],
+        "needs_live": False,
+        "pick_reasons": {"1": "should be ignored"},
+    })
+    result = pick(
+        query="q",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-14",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+        debug=False,
+    )
+    assert result.pick_reasons == {}
+
+
+def test_pick_sets_raw_picks_to_pre_validation_list(mocker):
+    from moodlist.agent import pick
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 99, 2],
+        "reasoning": "r",
+        "wanted_but_missing": [],
+        "needs_live": False,
+    })
+    result = pick(
+        query="q",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-14",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+    )
+    assert result.picks == [1, 2]
+    assert result.raw_picks == [1, 99, 2]

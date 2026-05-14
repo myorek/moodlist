@@ -40,6 +40,24 @@ Respond with JSON only, matching this schema:
 """
 
 
+DEBUG_SUFFIX = """
+
+DIAGNOSTIC MODE — include per-track reasons:
+
+Additionally, return a `pick_reasons` field in your JSON: an object
+keyed by each picked id (as a string), mapped to a one-sentence
+explanation of why that specific track fits the query. Keep each
+reason under 100 characters. Example:
+
+  "pick_reasons": {
+    "42": "Defining 1979 hard-rock single, anchors any rock canon",
+    "17": "Most accessible Metallica track; 80s metal bedrock"
+  }
+
+The overall `reasoning` field stays as-is (one-line summary).
+"""
+
+
 def build_user_blocks(library: list[dict], query: str, date_iso: str,
                       desired_count: int = 20) -> list[dict]:
     lib_text = "Library:\n" + json.dumps(library, ensure_ascii=False)
@@ -64,22 +82,36 @@ def pick(
     model: str,
     temperature: float,
     desired_count: int = 20,
+    debug: bool = False,
 ) -> AgentResult:
     blocks = build_user_blocks(library, query, date_iso, desired_count)
+    system = SYSTEM_PROMPT + DEBUG_SUFFIX if debug else SYSTEM_PROMPT
     raw = llm.call(
         api_key=api_key,
         model=model,
-        system=SYSTEM_PROMPT,
+        system=system,
         user_blocks=blocks,
         temperature=temperature,
     )
-    picks: list[int] = list(raw.get("picks", []))
+    raw_picks_list: list[int] = [
+        p for p in raw.get("picks", []) if isinstance(p, int)
+    ]
     needs_live = bool(raw.get("needs_live", False))
     reasoning = str(raw.get("reasoning", ""))
     wbm = list(raw.get("wanted_but_missing", []))
 
     valid_ids = {t["id"] for t in library}
-    filtered = [p for p in picks if isinstance(p, int) and p in valid_ids]
+    filtered = [p for p in raw_picks_list if p in valid_ids]
+
+    pick_reasons: dict[int, str] = {}
+    if debug:
+        raw_reasons = raw.get("pick_reasons", {})
+        if isinstance(raw_reasons, dict):
+            for key, val in raw_reasons.items():
+                try:
+                    pick_reasons[int(key)] = str(val)
+                except (TypeError, ValueError):
+                    continue
 
     if not needs_live:
         threshold = math.floor(0.5 * min(desired_count, len(library)))
@@ -88,5 +120,11 @@ def pick(
                 f"too few valid IDs ({len(filtered)}); rejecting playlist"
             )
 
-    return AgentResult(picks=filtered, reasoning=reasoning,
-                       wanted_but_missing=wbm, needs_live=needs_live)
+    return AgentResult(
+        picks=filtered,
+        reasoning=reasoning,
+        wanted_but_missing=wbm,
+        needs_live=needs_live,
+        raw_picks=raw_picks_list,
+        pick_reasons=pick_reasons,
+    )
