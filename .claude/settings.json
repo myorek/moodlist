@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source .venv/bin/activate*)",
+      "Bash(.venv/bin/python*)",
+      "Bash(.venv/bin/python3*)",
+      "Bash(.venv/bin/pytest*)",
+      "Bash(.venv/bin/ruff*)",
+      "Bash(.venv/bin/pip*)",
+      "Bash(uv venv*)",
+      "Bash(uv pip*)",
+      "Bash(uv run*)",
+      "Bash(uv sync*)",
+      "Bash(mkdir -p *)",
+      "Bash(touch *)",
+      "Bash(chmod +x *)",
+      "Bash(cd /Users/myorek/projects/moodlist*)",
+      "Bash(cd ~/projects/moodlist*)",
+      "Bash(ruff check*)",
+      "Bash(pytest*)",
+      "Bash(open -a foobar2000*)",
+      "Bash(git *)",
+      "Bash(ffmpeg *)"
+    ]
+  }
+}
