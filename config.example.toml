@@ -1,0 +1,16 @@
+# Copy to ~/.moodlist/config.toml and fill in your Anthropic API key.
+
+[anthropic]
+api_key = "sk-ant-..."             # required
+model   = "claude-haiku-4-5-20251001"
+
+[library]
+root = "~/Music"                   # absolute or ~-expanded path
+extensions = ["flac"]              # file types to index
+
+[foobar2000]
+app = "foobar2000"                 # value passed to `open -a`
+
+[playlist]
+default_count = 20
+temperature   = 0.4
