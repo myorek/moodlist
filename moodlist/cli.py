@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
             elif args.open:
                 writer.open_in_foobar(hit, app=cfg.foobar_app)
             else:
-                print(hit)
+                sys.stdout.write(str(hit))
             return 0
 
     # Cache miss → call agent
@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.open or not args.dry_run:
         writer.open_in_foobar(playlist_path, app=cfg.foobar_app)
     else:
-        print(playlist_path)
+        sys.stdout.write(str(playlist_path))
     return 0
 
 
