@@ -20,6 +20,9 @@ by INTEGER ID. Never invent IDs that aren't in the list.
   explicitly asks otherwise.
 - For "top X" queries, use your knowledge of canonical hits from that
   era/genre. Cross-reference against the library.
+- If the user's query specifies a number of tracks (e.g. "top 10",
+  "5 songs", "a dozen tracks"), honor that number. Otherwise return
+  the default count given below.
 - If the query asks about CURRENT charts ("today", "this week",
   "currently trending"), respond with {"needs_live": true, ...}
   instead of picking — do not guess current data.
@@ -43,7 +46,7 @@ def build_user_blocks(library: list[dict], query: str, date_iso: str,
     query_text = (
         f"Query: \"{query}\"\n"
         f"Date: {date_iso}\n"
-        f"Desired count: {desired_count}"
+        f"Default count: {desired_count}"
     )
     return [
         {"type": "text", "text": lib_text,

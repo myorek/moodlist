@@ -60,3 +60,21 @@ def test_pick_needs_live_branch(mocker):
                   date_iso="2026-05-14", api_key="k", model="m", temperature=0.4)
     assert result.needs_live is True
     assert result.picks == []
+
+
+def test_system_prompt_includes_count_override_instruction():
+    from moodlist.agent import SYSTEM_PROMPT
+    assert "If the user's query specifies a number of tracks" in SYSTEM_PROMPT
+
+
+def test_user_blocks_say_default_count_not_desired_count():
+    from moodlist.agent import build_user_blocks
+    blocks = build_user_blocks(
+        library=[{"id": 1, "artist": "A", "title": "T", "year": 2000}],
+        query="top 10 rock",
+        date_iso="2026-05-14",
+        desired_count=20,
+    )
+    query_text = blocks[1]["text"]
+    assert "Default count: 20" in query_text
+    assert "Desired count" not in query_text
