@@ -89,12 +89,19 @@ moodlist "songs like Master of Puppets"
 moodlist --fresh "top 80s metal"    # bypass cache, force a new pick
 moodlist --count 10 "rock classics" # request 10 tracks instead of default 20
 moodlist --dry-run "top rock"       # write playlist, print path, don't open foobar
+moodlist --debug "top 80s metal"    # also prints diagnostic sections to stderr
 moodlist --help                     # full flag reference
 ```
 
 The first run of a unique query takes 5-6 seconds (Claude Haiku call). The
 same query within the same library state returns in under a second (local
-query cache).
+query cache). Counts mentioned in the query itself are honored — `top 10
+rock` returns 10 tracks, `5 Queen songs` returns 5, and so on.
+
+Use `--debug` to see the full library context that gets sent to Haiku,
+its raw picks, per-track reasoning, validation results, and where the
+playlist was written. Debug output goes to stderr, so stdout (and Alfred
+pipelining) is unaffected.
 
 Time-sensitive queries (`today's top rock`, `this week's trending`) are
 **not** supported in v1 — Haiku's knowledge cuts off in 2025, so we don't
