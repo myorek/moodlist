@@ -6,11 +6,16 @@ See `docs/superpowers/specs/2026-05-14-moodlist-design.md` for the design.
 
 ## Quickstart
 
-1. `uv venv && source .venv/bin/activate`
-2. `uv pip install -e ".[dev]"`
-3. `cp config.example.toml ~/.moodlist/config.toml` (edit & add API key)
-4. `moodlist --reindex`
-5. `moodlist "top 80s metal"`
+```bash
+./install.sh
+# edit ~/.moodlist/config.toml to add your Anthropic API key, then:
+moodlist "top 80s metal"
+```
+
+If `moodlist` isn't found on your PATH after install, add this to
+your shell rc: `export PATH="$HOME/.local/bin:$PATH"`.
+
+For Alfred integration, see "Alfred workflow setup" below.
 
 ## Tests
 
