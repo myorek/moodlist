@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 from mutagen.flac import FLAC
@@ -43,36 +44,41 @@ class Indexer:
         if self.db_path.exists():
             self.db_path.unlink()
         conn = sqlite3.connect(self.db_path)
-        conn.executescript(SCHEMA)
-        n = 0
-        for path in sorted(self.library_root.rglob("*.flac")):
-            try:
-                f = FLAC(str(path))
-            except Exception:
-                continue
-            artist = _first_tag(f.tags, "ARTIST") if f.tags else ""
-            title = _first_tag(f.tags, "TITLE") if f.tags else path.stem
-            album = _first_tag(f.tags, "ALBUM") if f.tags else ""
-            year = _parse_year(_first_tag(f.tags, "DATE") if f.tags else "")
-            dur = int(f.info.length) if f.info else 0
-            conn.execute(
-                "INSERT INTO tracks(artist,title,album,year,path,duration_sec)"
-                " VALUES (?,?,?,?,?,?)",
-                (artist, title, album, year, str(path), dur),
-            )
-            n += 1
-        conn.commit()
-        conn.close()
-        return n
+        try:
+            conn.executescript(SCHEMA)
+            n = 0
+            for path in sorted(self.library_root.rglob("*.flac")):
+                try:
+                    f = FLAC(str(path))
+                except Exception as e:
+                    print(f"moodlist: skipping {path}: {e}", file=sys.stderr)
+                    continue
+                artist = _first_tag(f.tags, "ARTIST") if f.tags else ""
+                title = _first_tag(f.tags, "TITLE") if f.tags else path.stem
+                album = _first_tag(f.tags, "ALBUM") if f.tags else ""
+                year = _parse_year(_first_tag(f.tags, "DATE") if f.tags else "")
+                dur = int(f.info.length) if f.info else 0
+                conn.execute(
+                    "INSERT INTO tracks(artist,title,album,year,path,duration_sec)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (artist, title, album, year, str(path), dur),
+                )
+                n += 1
+            conn.commit()
+            return n
+        finally:
+            conn.close()
 
     def load_compact(self) -> list[dict]:
         if not self.db_path.exists():
             return []
         conn = sqlite3.connect(self.db_path)
-        rows = conn.execute(
-            "SELECT id, artist, title, year FROM tracks ORDER BY id"
-        ).fetchall()
-        conn.close()
+        try:
+            rows = conn.execute(
+                "SELECT id, artist, title, year FROM tracks ORDER BY id"
+            ).fetchall()
+        finally:
+            conn.close()
         return [
             {"id": r[0], "artist": r[1], "title": r[2], "year": r[3]}
             for r in rows
