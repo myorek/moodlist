@@ -46,7 +46,7 @@ leaves your machine, except as part of the prompt to Anthropic.
 ## Install
 
 ```bash
-git clone https://github.com/<you>/moodlist.git ~/projects/moodlist
+git clone https://github.com/myorek/moodlist.git ~/projects/moodlist
 cd ~/projects/moodlist
 ./install.sh
 ```
