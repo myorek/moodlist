@@ -176,3 +176,47 @@ def test_pick_sets_raw_picks_to_pre_validation_list(mocker):
     )
     assert result.picks == [1, 2]
     assert result.raw_picks == [1, 99, 2]
+
+
+def test_pick_accepts_small_count_from_query(mocker):
+    """When the user's query asks for a small count (e.g. 'top 5'),
+    Haiku returns that many picks; the threshold guard must not reject
+    them just because desired_count default is larger."""
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 2, 3, 4, 5],
+        "reasoning": "five metal classics",
+        "wanted_but_missing": [],
+        "needs_live": False,
+    })
+    library = [
+        {"id": i, "artist": f"A{i}", "title": f"T{i}", "year": 2000}
+        for i in range(1, 11)
+    ]
+    result = pick(
+        query="top 5 metal songs",
+        library=library,
+        date_iso="2026-05-14",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=20,  # default; Haiku honored the query's "5"
+    )
+    assert result.picks == [1, 2, 3, 4, 5]
+
+
+def test_pick_raises_when_agent_returns_empty_picks(mocker):
+    """An empty picks list (no needs_live) should still raise."""
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [],
+        "reasoning": "nothing matched",
+        "wanted_but_missing": [],
+        "needs_live": False,
+    })
+    with pytest.raises(AgentError, match="no picks"):
+        pick(
+            query="something obscure",
+            library=[
+                {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            ],
+            date_iso="2026-05-14",
+            api_key="k", model="m", temperature=0.4,
+            desired_count=20,
+        )

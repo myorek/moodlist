@@ -114,11 +114,18 @@ def pick(
                     continue
 
     if not needs_live:
-        threshold = math.floor(0.5 * min(desired_count, len(library)))
-        if len(filtered) < threshold:
-            raise AgentError(
-                f"too few valid IDs ({len(filtered)}); rejecting playlist"
-            )
+        # Reject only when most of Haiku's picks are unknown IDs (hallucination
+        # guard). Anchored to raw_picks length, not desired_count, so small
+        # counts honored from the query ("top 5") don't trigger a false alarm.
+        if raw_picks_list:
+            threshold = max(1, math.ceil(0.5 * len(raw_picks_list)))
+            if len(filtered) < threshold:
+                raise AgentError(
+                    f"too few valid IDs ({len(filtered)} of "
+                    f"{len(raw_picks_list)}); rejecting playlist"
+                )
+        else:
+            raise AgentError("agent returned no picks; rejecting playlist")
 
     return AgentResult(
         picks=filtered,
