@@ -43,3 +43,10 @@ def test_load_config_missing_api_key_raises(temp_home):
     cfg_path.write_text('[anthropic]\nmodel = "x"\n')
     with pytest.raises(ValueError, match="anthropic.api_key"):
         load_config(cfg_path)
+
+
+def test_load_config_raises_on_malformed_toml(temp_home):
+    cfg_path = temp_home / "config.toml"
+    cfg_path.write_text('[anthropic\napi_key = "x"\n')  # missing closing bracket
+    with pytest.raises(ValueError, match="malformed"):
+        load_config(cfg_path)

@@ -15,14 +15,18 @@ from .types import Track
 
 
 def _load_full_tracks(db_path: Path, picks: list[int]) -> list[Track]:
+    if not picks:
+        return []
     conn = sqlite3.connect(db_path)
-    placeholders = ",".join("?" * len(picks))
-    rows = conn.execute(
-        f"SELECT id, artist, title, album, year, path, duration_sec "
-        f"FROM tracks WHERE id IN ({placeholders})",
-        picks,
-    ).fetchall()
-    conn.close()
+    try:
+        placeholders = ",".join("?" * len(picks))
+        rows = conn.execute(
+            f"SELECT id, artist, title, album, year, path, duration_sec "
+            f"FROM tracks WHERE id IN ({placeholders})",
+            picks,
+        ).fetchall()
+    finally:
+        conn.close()
     by_id = {r[0]: r for r in rows}
     out = []
     for pid in picks:

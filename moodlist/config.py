@@ -23,8 +23,11 @@ def load_config(path: Path | None = None) -> Config:
         raise FileNotFoundError(
             f"config not found at {cfg_path}; copy config.example.toml there"
         )
-    with cfg_path.open("rb") as f:
-        data = tomllib.load(f)
+    try:
+        with cfg_path.open("rb") as f:
+            data = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"config.toml is malformed: {e}") from e
     try:
         api_key = data["anthropic"]["api_key"]
     except KeyError as e:
