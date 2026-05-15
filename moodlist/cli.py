@@ -117,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
             wishlist_db = WishlistDB(moodlist_dir / "wishlist.sqlite")
             removed = wishlist_db.remove_matching(library_keys)
             if removed:
-                print(f"wishlist: pruned {removed} entries now in library",
+                word = "entry" if removed == 1 else "entries"
+                print(f"wishlist: pruned {removed} {word} now in library",
                       file=sys.stderr)
         except Exception as e:
             print(f"wishlist: prune failed ({e}); continuing",
