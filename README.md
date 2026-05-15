@@ -103,6 +103,26 @@ its raw picks, per-track reasoning, validation results, and where the
 playlist was written. Debug output goes to stderr, so stdout (and Alfred
 pipelining) is unaffected.
 
+### Wishlist
+
+When Haiku picks tracks for a query, it can also suggest canonical
+tracks that fit but **aren't in your library**. These accumulate into
+a deduplicated SQLite wishlist at `~/.moodlist/wishlist.sqlite`. Use
+it as a shopping list.
+
+```bash
+moodlist wishlist                 # top 50 by mention count
+moodlist wishlist --all           # everything, no limit
+moodlist wishlist --since 7       # only entries seen in the last 7 days
+moodlist wishlist --json          # machine-readable output
+```
+
+The list de-dupes across queries (so "Black Sabbath - Paranoid" only
+appears once no matter how many metal queries surface it) and skips
+anything already in your library. When you buy a missing track and
+drop it into `~/Music/`, run `moodlist --reindex` and the entry auto-
+disappears from the wishlist.
+
 Time-sensitive queries (`today's top rock`, `this week's trending`) are
 **not** supported in v1 — Haiku's knowledge cuts off in 2025, so we don't
 fake live chart data. The CLI returns a clear message instead.
