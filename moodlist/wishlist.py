@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import sqlite3
+import sys
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,7 +99,6 @@ class WishlistDB:
             self._migrate_from_misses_log(self.db_path.parent / "misses.log")
 
     def _migrate_from_misses_log(self, log_path: Path) -> None:
-        import sys
         if not log_path.exists():
             return
         try:
