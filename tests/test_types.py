@@ -27,3 +27,43 @@ def test_agent_result_accepts_raw_picks_and_pick_reasons():
                     raw_picks=[1, 2, 99], pick_reasons={1: "why one", 2: "why two"})
     assert r.raw_picks == [1, 2, 99]
     assert r.pick_reasons == {1: "why one", 2: "why two"}
+
+
+def test_wanted_album_carries_artist_album_and_optional_fields():
+    from moodlist.types import WantedAlbum
+    a = WantedAlbum(
+        artist="Led Zeppelin",
+        artist_ja="レッド・ツェッペリン",
+        album="Led Zeppelin II",
+        year=1969,
+    )
+    assert a.artist == "Led Zeppelin"
+    assert a.artist_ja == "レッド・ツェッペリン"
+    assert a.album == "Led Zeppelin II"
+    assert a.year == 1969
+
+
+def test_wanted_album_accepts_none_for_japanese_and_year():
+    from moodlist.types import WantedAlbum
+    a = WantedAlbum(artist="AC/DC", artist_ja=None, album="Back in Black",
+                    year=None)
+    assert a.artist_ja is None
+    assert a.year is None
+
+
+def test_agent_result_default_wanted_albums_is_empty_list():
+    from moodlist.types import AgentResult
+    r = AgentResult(picks=[1], reasoning="r", wanted_but_missing=[],
+                    needs_live=False)
+    assert r.wanted_albums == []
+
+
+def test_agent_result_accepts_wanted_albums():
+    from moodlist.types import AgentResult, WantedAlbum
+    r = AgentResult(
+        picks=[1], reasoning="r", wanted_but_missing=[], needs_live=False,
+        wanted_albums=[WantedAlbum(artist="A", artist_ja=None,
+                                   album="X", year=None)],
+    )
+    assert len(r.wanted_albums) == 1
+    assert r.wanted_albums[0].album == "X"

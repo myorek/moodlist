@@ -25,6 +25,14 @@ class Track:
 
 
 @dataclass(frozen=True)
+class WantedAlbum:
+    artist: str
+    artist_ja: str | None
+    album: str
+    year: int | None
+
+
+@dataclass(frozen=True)
 class AgentResult:
     picks: list[int]
     reasoning: str
@@ -32,3 +40,4 @@ class AgentResult:
     needs_live: bool
     raw_picks: list[int] = field(default_factory=list)
     pick_reasons: dict[int, str] = field(default_factory=dict)
+    wanted_albums: list[WantedAlbum] = field(default_factory=list)
