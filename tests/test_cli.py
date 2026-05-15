@@ -2,6 +2,7 @@ import json
 import sqlite3
 
 from moodlist import cli
+from moodlist.types import WantedAlbum
 from moodlist.wishlist import WishlistDB
 
 
@@ -223,93 +224,6 @@ def test_no_debug_flag_passes_debug_false_to_agent(temp_home, tmp_path,
     assert debug_arg is False
 
 
-def test_wishlist_upsert_runs_on_cache_miss(temp_home, tmp_path, mocker):
-    _seed_library(temp_home)
-    _write_config(temp_home, tmp_path / "Music")
-    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
-    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
-        picks=[1, 2], reasoning="r",
-        wanted_but_missing=["Led Zeppelin - Stairway to Heaven",
-                            "Pink Floyd - Comfortably Numb"],
-        needs_live=False,
-        raw_picks=[1, 2],
-        pick_reasons={},
-    ))
-
-    cli.main(["top rock", "--dry-run"])
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    assert db.count() == 2
-    names = sorted(e.display_name for e in db.list(limit=None))
-    assert names == ["Led Zeppelin - Stairway to Heaven",
-                     "Pink Floyd - Comfortably Numb"]
-
-
-def test_wishlist_skips_tracks_already_in_library(temp_home, tmp_path, mocker):
-    """If Haiku suggests a track the user already owns (under any
-    spelling), do NOT add it to the wishlist."""
-    _seed_library(temp_home)
-    _write_config(temp_home, tmp_path / "Music")
-    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
-    # _seed_library inserts: Metallica - Enter Sandman, Queen - Bohemian Rhapsody
-    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
-        picks=[1, 2], reasoning="r",
-        wanted_but_missing=[
-            "Metallica – Enter Sandman",          # already owned, em dash
-            "Led Zeppelin - Stairway to Heaven",  # not owned
-        ],
-        needs_live=False,
-        raw_picks=[1, 2],
-        pick_reasons={},
-    ))
-
-    cli.main(["top rock", "--dry-run"])
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    names = [e.display_name for e in db.list(limit=None)]
-    assert names == ["Led Zeppelin - Stairway to Heaven"]
-
-
-def test_reindex_prunes_wishlist_of_newly_owned_tracks(temp_home, tmp_path,
-                                                       mocker):
-    """After reindex, wishlist entries matching the new library are removed."""
-    _seed_library(temp_home)
-    _write_config(temp_home, tmp_path / "Music")
-
-    # Pre-populate the wishlist with one track that IS in the seeded library
-    # and one that ISN'T.
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    db.upsert("Metallica - Enter Sandman", "q", "2026-05-14")  # in library
-    db.upsert("Led Zeppelin - Stairway to Heaven", "q", "2026-05-14")  # not
-    assert db.count() == 2
-
-    # Force --reindex but stub out the actual scan; we want is_stale=True
-    # and load_compact() to return our seeded library.
-    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
-    mocker.patch("moodlist.indexer.Indexer.build", return_value=2)
-    # load_compact() reads library.cache.json that _seed_library already wrote.
-
-    cli.main(["--reindex", "--dry-run"])
-    db2 = WishlistDB(temp_home / "wishlist.sqlite")
-    names = [e.display_name for e in db2.list(limit=None)]
-    assert names == ["Led Zeppelin - Stairway to Heaven"]
-
-
-def test_wishlist_subcommand_prints_table_with_entries(temp_home, tmp_path,
-                                                        mocker, capsys):
-    _write_config(temp_home, tmp_path / "Music")
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    db.upsert("Black Sabbath - Paranoid", "top metal", "2026-05-14")
-    db.upsert("Black Sabbath - Paranoid", "best 80s", "2026-05-15")
-    db.upsert("Iron Maiden - The Trooper", "top metal", "2026-05-14")
-
-    exit_code = cli.main(["wishlist"])
-    assert exit_code == 0
-    out = capsys.readouterr().out
-    assert "Black Sabbath - Paranoid" in out
-    assert "Iron Maiden - The Trooper" in out
-    assert "Mentions" in out  # header row
-    assert "2" in out  # mention count for Paranoid
-
-
 def test_wishlist_subcommand_empty_prints_friendly_message(temp_home,
                                                            tmp_path, capsys):
     _write_config(temp_home, tmp_path / "Music")
@@ -318,35 +232,6 @@ def test_wishlist_subcommand_empty_prints_friendly_message(temp_home,
     assert exit_code == 0
     out = capsys.readouterr().out
     assert "empty" in out.lower()
-
-
-def test_wishlist_subcommand_json_mode_emits_valid_json(temp_home,
-                                                        tmp_path, capsys):
-    _write_config(temp_home, tmp_path / "Music")
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    db.upsert("Track A", "q1", "2026-05-14")
-    db.upsert("Track A", "q2", "2026-05-15")
-    db.upsert("Track B", "q1", "2026-05-14")
-
-    exit_code = cli.main(["wishlist", "--json"])
-    assert exit_code == 0
-    parsed = json.loads(capsys.readouterr().out)
-    assert isinstance(parsed, list)
-    assert len(parsed) == 2
-    by_name = {e["display_name"]: e for e in parsed}
-    assert by_name["Track A"]["mention_count"] == 2
-    assert sorted(by_name["Track A"]["queries_seen"]) == ["q1", "q2"]
-
-
-def test_wishlist_subcommand_all_flag_disables_limit(temp_home, tmp_path,
-                                                     capsys):
-    _write_config(temp_home, tmp_path / "Music")
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    for i in range(55):
-        db.upsert(f"Track {i:03d}", "q", "2026-05-14")
-    cli.main(["wishlist", "--all", "--json"])
-    parsed = json.loads(capsys.readouterr().out)
-    assert len(parsed) == 55
 
 
 def test_wishlist_subcommand_since_filter(temp_home, tmp_path, capsys):
@@ -359,11 +244,161 @@ def test_wishlist_subcommand_since_filter(temp_home, tmp_path, capsys):
 
     _write_config(temp_home, tmp_path / "Music")
     db = WishlistDB(temp_home / "wishlist.sqlite")
-    db.upsert("Old Track", "q", old_date)
-    db.upsert("Recent Track", "q", recent_date)
+    db.upsert_album(WantedAlbum("Old Artist", None, "Old Album", None),
+                    "q", old_date)
+    db.upsert_album(WantedAlbum("Recent Artist", None, "Recent Album", None),
+                    "q", recent_date)
 
     cli.main(["wishlist", "--since", "30", "--json"])
     parsed = json.loads(capsys.readouterr().out)
-    names = [e["display_name"] for e in parsed]
-    assert "Recent Track" in names
-    assert "Old Track" not in names
+    names = [e["artist_en"] for e in parsed]
+    assert "Recent Artist" in names
+    assert "Old Artist" not in names
+
+
+def test_wishlist_upsert_album_runs_on_cache_miss(temp_home, tmp_path, mocker):
+    """When agent returns wanted_albums, the wishlist gets them upserted."""
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="r",
+        wanted_but_missing=["Led Zeppelin - Whole Lotta Love"],
+        needs_live=False,
+        raw_picks=[1, 2], pick_reasons={},
+        wanted_albums=[
+            WantedAlbum(artist="Led Zeppelin",
+                        artist_ja="レッド・ツェッペリン",
+                        album="Led Zeppelin II", year=1969),
+        ],
+    ))
+
+    cli.main(["top rock", "--dry-run"])
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    assert db.count() == 1
+    e = db.list(limit=None)[0]
+    assert e.artist_en == "Led Zeppelin"
+    assert e.album_en == "Led Zeppelin II"
+    assert e.year == 1969
+
+
+def test_wishlist_subcommand_prints_album_format(temp_home, tmp_path,
+                                                  mocker, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert_album(
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン",
+                    "Led Zeppelin II", 1969),
+        "top 70s rock", "2026-05-15",
+    )
+    db.upsert_album(
+        WantedAlbum("AC/DC", None, "Back in Black", 1980),
+        "top metal", "2026-05-15",
+    )
+
+    exit_code = cli.main(["wishlist"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Bin" in out
+    assert "Led Zeppelin" in out
+    assert "Led Zeppelin II" in out
+    assert "1969" in out
+    assert "レッド・ツェッペリン" in out
+    assert "AC/DC" in out
+    assert "Back in Black" in out
+    # Year display
+    assert "1980" in out
+
+
+def test_wishlist_subcommand_json_mode_emits_new_schema(temp_home, tmp_path,
+                                                        capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert_album(
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン",
+                    "Led Zeppelin II", 1969),
+        "q1", "2026-05-15",
+    )
+    cli.main(["wishlist", "--json"])
+    parsed = json.loads(capsys.readouterr().out)
+    assert len(parsed) == 1
+    row = parsed[0]
+    # New schema fields present
+    for key in ("artist_en", "artist_ja", "starter_latin", "starter_kana",
+                "album_en", "year", "mention_count"):
+        assert key in row, f"missing key {key}"
+    assert row["artist_en"] == "Led Zeppelin"
+    assert row["album_en"] == "Led Zeppelin II"
+    assert row["year"] == 1969
+    assert row["starter_latin"] == "L"
+    assert row["starter_kana"] == "レ"
+
+
+def test_wishlist_subcommand_all_flag_disables_limit_v1_3(temp_home, tmp_path,
+                                                           capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    for i in range(55):
+        db.upsert_album(
+            WantedAlbum(f"Artist {i:03d}", None, f"Album {i:03d}", None),
+            "q", "2026-05-15",
+        )
+    cli.main(["wishlist", "--all", "--json"])
+    parsed = json.loads(capsys.readouterr().out)
+    assert len(parsed) == 55
+
+
+def test_wishlist_subcommand_sort_latin(temp_home, tmp_path, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert_album(WantedAlbum("Pink Floyd", "ピンク・フロイド", "P", None),
+                    "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q1", "2026-05-15")
+    db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q2", "2026-05-15")
+    cli.main(["wishlist", "--sort", "latin", "--json"])
+    parsed = json.loads(capsys.readouterr().out)
+    starters = [r["starter_latin"] for r in parsed]
+    # AC/DC has 2 mentions but Latin sort puts A before P regardless
+    assert starters == ["A", "P"]
+
+
+def test_wishlist_subcommand_sort_kana(temp_home, tmp_path, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("Queen", "クイーン", "Q", None),
+                    "q", "2026-05-15")
+    cli.main(["wishlist", "--sort", "kana", "--json"])
+    parsed = json.loads(capsys.readouterr().out)
+    # Kana sort: Queen (クイーン) first, AC/DC (no kana) last.
+    starters = [r["starter_kana"] for r in parsed]
+    assert starters == ["ク", None]
+
+
+def test_reindex_prune_using_v1_3_wishlist(temp_home, tmp_path, mocker):
+    """After reindex, wishlist entries matching the library by
+    normalized 'artist - album' get pruned."""
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    # This dedup_key = normalize("Metallica - Enter Sandman") WILL match
+    # the library entry's normalize("Metallica - Enter Sandman") in
+    # remove_matching (because _seed_library inserts that track).
+    db.upsert_album(
+        WantedAlbum("Metallica", None, "Enter Sandman", None),
+        "q", "2026-05-15",
+    )
+    db.upsert_album(
+        WantedAlbum("Led Zeppelin", None, "Led Zeppelin II", None),
+        "q", "2026-05-15",
+    )
+    assert db.count() == 2
+
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    mocker.patch("moodlist.indexer.Indexer.build", return_value=2)
+
+    cli.main(["--reindex", "--dry-run"])
+    db2 = WishlistDB(temp_home / "wishlist.sqlite")
+    names = [e.artist_en for e in db2.list(limit=None)]
+    assert names == ["Led Zeppelin"]

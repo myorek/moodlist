@@ -81,6 +81,11 @@ def _wishlist_command(argv: list[str]) -> int:
                         help="only entries seen in the last N days")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON")
+    parser.add_argument(
+        "--sort", choices=("mentions", "latin", "kana"), default="mentions",
+        help="default: mentions (most-wanted first); use latin or kana "
+             "for shopping-aisle navigation",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -95,12 +100,17 @@ def _wishlist_command(argv: list[str]) -> int:
     if args.since is not None:
         since_date = _dt.date.today() - _dt.timedelta(days=args.since)
     limit = None if args.all else 50
-    entries = db.list(limit=limit, since=since_date)
+    entries = db.list(limit=limit, since=since_date, sort=args.sort)
 
     if args.json:
         payload = [
             {
-                "display_name": e.display_name,
+                "artist_en": e.artist_en,
+                "artist_ja": e.artist_ja,
+                "starter_latin": e.starter_latin,
+                "starter_kana": e.starter_kana,
+                "album_en": e.album_en,
+                "year": e.year,
                 "first_seen": e.first_seen,
                 "last_seen": e.last_seen,
                 "mention_count": e.mention_count,
@@ -116,15 +126,23 @@ def _wishlist_command(argv: list[str]) -> int:
         print('  moodlist "top 80s metal"')
         return 0
 
-    header = f"Wishlist — {total} unique tracks"
+    header = f"Wishlist — {total} albums to hunt"
     if not args.all and total > 50:
         header += "\n(showing top 50; run `moodlist wishlist --all` for full list)"
     print(header)
     print()
-    print(f"  {'Mentions':<8}  {'Last seen':<11}  Track")
-    print(f"  {'-' * 8:<8}  {'-' * 11:<11}  {'-' * 49}")
+    print(f" {'Bin':<4} {'Artist':<24} {'Album':<22} {'Year':<5} {'×N':>3}")
+    print(f" {'-' * 4:<4} {'-' * 24:<24} {'-' * 22:<22} {'-' * 5:<5} {'-' * 3:>3}")
     for e in entries:
-        print(f"  {e.mention_count:>8}  {e.last_seen:<11}  {e.display_name}")
+        bin_char = e.starter_kana if args.sort == "kana" and e.starter_kana \
+            else e.starter_latin
+        year_str = str(e.year) if e.year is not None else "—"
+        artist_label = e.artist_en[:24]
+        album_label = e.album_en[:22]
+        print(f" {bin_char:<4} {artist_label:<24} {album_label:<22} "
+              f"{year_str:<5} {e.mention_count:>3}")
+        if e.artist_ja:
+            print(f" {'':4} {e.artist_ja}")
     return 0
 
 
@@ -318,31 +336,23 @@ def main(argv: list[str] | None = None) -> int:
     cache.store(args.query, library_version, playlist_path)
 
     if result.wanted_but_missing:
-        # 2. Wishlist upsert with library pre-filter.
-        # Initialise WishlistDB BEFORE writing misses.log so that the
-        # one-time migration (which reads misses.log) runs on the old
-        # log rather than the entries we're about to append.
-        try:
-            library_keys = {
-                normalize_track_name(f"{t['artist']} - {t['title']}")
-                for t in library
-            }
-            wishlist_db = WishlistDB(moodlist_dir / "wishlist.sqlite")
-            for m in result.wanted_but_missing:
-                key = normalize_track_name(m)
-                if key and key not in library_keys:
-                    wishlist_db.upsert(
-                        display_name=m, query=args.query, seen_at=today,
-                    )
-        except Exception as e:
-            print(f"wishlist: write failed ({e}); continuing",
-                  file=sys.stderr)
-
         # 1. Existing misses.log audit trail (unchanged).
         misses = moodlist_dir / "misses.log"
         with misses.open("a") as f:
             for m in result.wanted_but_missing:
                 f.write(f"{today}\t{args.query}\t{m}\n")
+
+    # 2. Wishlist upsert (album-level, v1.3). Uses wanted_albums.
+    if result.wanted_albums:
+        try:
+            wishlist_db = WishlistDB(moodlist_dir / "wishlist.sqlite")
+            for album in result.wanted_albums:
+                wishlist_db.upsert_album(
+                    album, query=args.query, seen_at=today,
+                )
+        except Exception as e:
+            print(f"wishlist: write failed ({e}); continuing",
+                  file=sys.stderr)
 
     _debug_section(args, "output")
     _debug_print(args, f"playlist:       {playlist_path}")
