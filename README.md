@@ -105,23 +105,52 @@ pipelining) is unaffected.
 
 ### Wishlist
 
-When Haiku picks tracks for a query, it can also suggest canonical
-tracks that fit but **aren't in your library**. These accumulate into
-a deduplicated SQLite wishlist at `~/.moodlist/wishlist.sqlite`. Use
-it as a shopping list.
+When Haiku picks tracks for a query, it also resolves them to the
+canonical **albums** they belong to. Those albums accumulate into a
+deduplicated SQLite store at `~/.moodlist/wishlist.sqlite` — your
+shopping list, organised for physical record-store hunting.
+
+Each entry carries the English artist name, the Japanese katakana
+transliteration (for stores that organise Western artists by gojūon
+phonetic order, like Bookoff 洋楽 sections), a single starter
+character for bin navigation, the album title, and the original
+release year.
 
 ```bash
 moodlist wishlist                 # top 50 by mention count
-moodlist wishlist --all           # everything, no limit
-moodlist wishlist --since 7       # only entries seen in the last 7 days
-moodlist wishlist --json          # machine-readable output
+moodlist wishlist --all           # full list
+moodlist wishlist --since 7       # last week
+moodlist wishlist --sort latin    # alphabetised by English starter
+moodlist wishlist --sort kana     # alphabetised by Japanese starter
+moodlist wishlist --json          # machine-readable
 ```
 
-The list de-dupes across queries (so "Black Sabbath - Paranoid" only
-appears once no matter how many metal queries surface it) and skips
-anything already in your library. When you buy a missing track and
-drop it into `~/Music/`, run `moodlist --reindex` and the entry auto-
-disappears from the wishlist.
+Default output:
+
+```
+Wishlist — 31 albums to hunt
+
+ Bin  Artist                   Album                  Year   ×N
+ ──   ──────────────────────   ────────────────────   ────   ──
+  L   Led Zeppelin             Led Zeppelin II        1969    7
+      レッド・ツェッペリン
+  P   Pink Floyd               The Wall               1979    5
+      ピンク・フロイド
+  A   AC/DC                    Back in Black          1980    4
+  …
+```
+
+Multiple tracks Haiku surfaces from the same album collapse to ONE
+wishlist row (with `×N` showing how many times that album has been
+mentioned across queries). When you buy an album and drop a track
+from it into `~/Music/`, `moodlist --reindex` prunes the wishlist
+entry automatically.
+
+**First upgrade from v1.2:** the first run after upgrading triggers a
+one-time Haiku call to resolve your v1.2 track-level wishlist into
+v1.3 album-level records (~5s, one-time cost). The old table is
+preserved as `wishlist_v1_2_backup` inside the SQLite file in case
+you want to inspect it.
 
 Time-sensitive queries (`today's top rock`, `this week's trending`) are
 **not** supported in v1 — Haiku's knowledge cuts off in 2025, so we don't
