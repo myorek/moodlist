@@ -4,7 +4,7 @@ import datetime as _dt
 import sqlite3
 
 from moodlist.types import WantedAlbum
-from moodlist.wishlist import WishlistDB, WishlistEntry, derive_starters, normalize_track_name
+from moodlist.wishlist import WishlistDB, derive_starters, normalize_track_name
 
 
 def test_normalize_lowercases_and_strips_whitespace():
@@ -190,7 +190,10 @@ def test_list_sort_latin_orders_alphabetically(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
     db.upsert_album(WantedAlbum("Pink Floyd", "ピンク・フロイド", "P", None), "q", "2026-05-15")
     db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q1", "2026-05-15")
-    db.upsert_album(WantedAlbum("Led Zeppelin", "レッド・ツェッペリン", "L", None), "q1", "2026-05-15")
+    db.upsert_album(
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン", "L", None),
+        "q1", "2026-05-15",
+    )
     entries = db.list(limit=None, sort="latin")
     starters = [e.starter_latin for e in entries]
     assert starters == ["A", "L", "P"]
@@ -200,7 +203,10 @@ def test_list_sort_kana_orders_japanese_then_latin_only(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
     db.upsert_album(WantedAlbum("Queen", "クイーン", "Q", None), "q", "2026-05-15")
     db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q", "2026-05-15")
-    db.upsert_album(WantedAlbum("Led Zeppelin", "レッド・ツェッペリン", "L", None), "q", "2026-05-15")
+    db.upsert_album(
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン", "L", None),
+        "q", "2026-05-15",
+    )
     entries = db.list(limit=None, sort="kana")
     # Japanese starters first (sorted), then Latin-only entries last.
     starters_kana = [e.starter_kana for e in entries]
