@@ -220,3 +220,97 @@ def test_pick_raises_when_agent_returns_empty_picks(mocker):
             api_key="k", model="m", temperature=0.4,
             desired_count=20,
         )
+
+
+def test_system_prompt_mentions_wanted_albums_field():
+    from moodlist.agent import SYSTEM_PROMPT
+    assert "wanted_albums" in SYSTEM_PROMPT
+
+
+def test_wanted_albums_parsed_from_response(mocker):
+    from moodlist.agent import pick
+    from moodlist.types import WantedAlbum
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 2],
+        "reasoning": "r",
+        "wanted_but_missing": ["Led Zeppelin - Whole Lotta Love"],
+        "needs_live": False,
+        "wanted_albums": [
+            {"artist": "Led Zeppelin", "artist_ja": "レッド・ツェッペリン",
+             "album": "Led Zeppelin II", "year": 1969},
+        ],
+    })
+    result = pick(
+        query="top rock",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-15",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+    )
+    assert len(result.wanted_albums) == 1
+    assert isinstance(result.wanted_albums[0], WantedAlbum)
+    assert result.wanted_albums[0].artist == "Led Zeppelin"
+    assert result.wanted_albums[0].artist_ja == "レッド・ツェッペリン"
+    assert result.wanted_albums[0].album == "Led Zeppelin II"
+    assert result.wanted_albums[0].year == 1969
+
+
+def test_wanted_albums_empty_when_field_missing(mocker):
+    from moodlist.agent import pick
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 2],
+        "reasoning": "r",
+        "wanted_but_missing": [],
+        "needs_live": False,
+        # no "wanted_albums" key
+    })
+    result = pick(
+        query="q",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-15",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+    )
+    assert result.wanted_albums == []
+
+
+def test_wanted_albums_skips_malformed_entries(mocker):
+    from moodlist.agent import pick
+    mocker.patch("moodlist.agent.llm.call", return_value={
+        "picks": [1, 2],
+        "reasoning": "r",
+        "wanted_but_missing": [],
+        "needs_live": False,
+        "wanted_albums": [
+            {"artist": "Good", "artist_ja": None, "album": "OK", "year": 2000},
+            "this is not a dict",
+            {"album": "Missing artist"},
+            {"artist": "Only artist"},
+            {"artist": "Bad year", "artist_ja": None,
+             "album": "X", "year": "not a number"},
+        ],
+    })
+    result = pick(
+        query="q",
+        library=[
+            {"id": 1, "artist": "A", "title": "T1", "year": 2000},
+            {"id": 2, "artist": "B", "title": "T2", "year": 2001},
+        ],
+        date_iso="2026-05-15",
+        api_key="k", model="m", temperature=0.4,
+        desired_count=2,
+    )
+    # Only the first entry is well-formed. The "Bad year" entry has
+    # required fields but year=non-int — accepted, year coerced to None.
+    assert len(result.wanted_albums) == 2
+    albums = sorted(result.wanted_albums, key=lambda a: a.album)
+    assert albums[0].album == "OK"
+    assert albums[0].year == 2000
+    assert albums[1].album == "X"
+    assert albums[1].year is None

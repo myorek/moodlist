@@ -4,7 +4,7 @@ import json
 import math
 
 from . import llm
-from .types import AgentResult
+from .types import AgentResult, WantedAlbum
 
 
 class AgentError(RuntimeError):
@@ -29,12 +29,23 @@ by INTEGER ID. Never invent IDs that aren't in the list.
 - Provide a one-line reasoning suitable for showing to the user.
 - If you know of canonical tracks that match the query but are NOT in
   this library, list them in `wanted_but_missing` (max 5).
+- For each track in `wanted_but_missing`, also include an entry in
+  `wanted_albums` resolving it to the canonical album it appears on.
+  Each `wanted_albums` entry is {artist, artist_ja, album, year}.
+  `artist_ja` is the standard Japanese katakana transliteration
+  (e.g. "Led Zeppelin" → "レッド・ツェッペリン"); set it to null when
+  the artist's name is not commonly rendered in Japanese (AC/DC, U2).
+  When multiple wanted tracks share an album, list the album ONCE,
+  not once per track. `year` is the original release year of the
+  album (not a reissue); null if uncertain.
 
 Respond with JSON only, matching this schema:
 {
   "picks":              [int],
   "reasoning":          string,
   "wanted_but_missing": [string],
+  "wanted_albums":      [{"artist": string, "artist_ja": string | null,
+                          "album": string, "year": int | null}],
   "needs_live":         boolean
 }
 """
@@ -100,6 +111,30 @@ def pick(
     reasoning = str(raw.get("reasoning", ""))
     wbm = list(raw.get("wanted_but_missing", []))
 
+    # Parse wanted_albums (structured) — v1.3
+    wanted_albums: list[WantedAlbum] = []
+    for entry in raw.get("wanted_albums", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        artist = entry.get("artist")
+        album = entry.get("album")
+        if not isinstance(artist, str) or not artist.strip():
+            continue
+        if not isinstance(album, str) or not album.strip():
+            continue
+        artist_ja_raw = entry.get("artist_ja")
+        artist_ja = (
+            artist_ja_raw
+            if isinstance(artist_ja_raw, str) and artist_ja_raw.strip()
+            else None
+        )
+        year_raw = entry.get("year")
+        year = year_raw if isinstance(year_raw, int) else None
+        wanted_albums.append(
+            WantedAlbum(artist=artist.strip(), artist_ja=artist_ja,
+                        album=album.strip(), year=year)
+        )
+
     valid_ids = {t["id"] for t in library}
     filtered = [p for p in raw_picks_list if p in valid_ids]
 
@@ -134,4 +169,5 @@ def pick(
         needs_live=needs_live,
         raw_picks=raw_picks_list,
         pick_reasons=pick_reasons,
+        wanted_albums=wanted_albums,
     )
