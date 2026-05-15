@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime as _dt
 import sqlite3
 
-from moodlist.wishlist import WishlistDB, derive_starters, normalize_track_name
+from moodlist.types import WantedAlbum
+from moodlist.wishlist import WishlistDB, WishlistEntry, derive_starters, normalize_track_name
 
 
 def test_normalize_lowercases_and_strips_whitespace():
@@ -91,154 +92,162 @@ def test_derive_starters_uppercases_latin():
     assert derive_starters("madonna", "マドンナ") == ("M", "マ")
 
 
-def test_wishlistdb_creates_schema_on_init(temp_home):
+def test_wishlistdb_creates_v1_3_schema_on_init(temp_home):
     db_path = temp_home / "wishlist.sqlite"
     WishlistDB(db_path)
     conn = sqlite3.connect(db_path)
     try:
-        rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(wishlist)")}
     finally:
         conn.close()
-    assert ("wishlist",) in rows
+    assert "artist_en" in cols
+    assert "artist_ja" in cols
+    assert "starter_latin" in cols
+    assert "starter_kana" in cols
+    assert "album_en" in cols
+    assert "year" in cols
+    assert "dedup_key" in cols
+    assert "mention_count" in cols
 
 
-def test_upsert_inserts_new_entry(temp_home):
+def test_upsert_album_inserts_new_row(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
-    inserted = db.upsert(
-        display_name="Black Sabbath - Paranoid",
-        query="top 80s metal",
-        seen_at="2026-05-14",
+    inserted = db.upsert_album(
+        WantedAlbum(artist="Led Zeppelin", artist_ja="レッド・ツェッペリン",
+                    album="Led Zeppelin II", year=1969),
+        query="top 70s rock",
+        seen_at="2026-05-15",
     )
     assert inserted is True
     assert db.count() == 1
+    entries = db.list(limit=None)
+    e = entries[0]
+    assert e.artist_en == "Led Zeppelin"
+    assert e.artist_ja == "レッド・ツェッペリン"
+    assert e.album_en == "Led Zeppelin II"
+    assert e.year == 1969
+    assert e.starter_latin == "L"
+    assert e.starter_kana == "レ"
+    assert e.mention_count == 1
+    assert e.queries_seen == ["top 70s rock"]
 
 
-def test_upsert_existing_increments_mention_count(temp_home):
+def test_upsert_album_same_album_increments_mention_count(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Black Sabbath - Paranoid", "top 80s metal", "2026-05-14")
-    inserted = db.upsert("Black Sabbath - Paranoid", "best metal", "2026-05-15")
+    a = WantedAlbum(artist="Led Zeppelin", artist_ja="レッド・ツェッペリン",
+                    album="Led Zeppelin II", year=1969)
+    db.upsert_album(a, query="q1", seen_at="2026-05-14")
+    inserted = db.upsert_album(a, query="q2", seen_at="2026-05-15")
     assert inserted is False
     entries = db.list(limit=None)
     assert len(entries) == 1
     assert entries[0].mention_count == 2
-
-
-def test_upsert_existing_updates_last_seen(temp_home):
-    db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Black Sabbath - Paranoid", "q1", "2026-05-14")
-    db.upsert("Black Sabbath - Paranoid", "q2", "2026-05-20")
-    entries = db.list(limit=None)
-    assert entries[0].last_seen == "2026-05-20"
-    assert entries[0].first_seen == "2026-05-14"
-
-
-def test_upsert_appends_unique_queries_to_queries_seen(temp_home):
-    db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Track A", "q1", "2026-05-14")
-    db.upsert("Track A", "q2", "2026-05-15")
-    db.upsert("Track A", "q1", "2026-05-16")  # duplicate query
-    entries = db.list(limit=None)
     assert sorted(entries[0].queries_seen) == ["q1", "q2"]
+    assert entries[0].first_seen == "2026-05-14"
+    assert entries[0].last_seen == "2026-05-15"
 
 
-def test_upsert_uses_normalized_dedup_key(temp_home):
-    """Two display_name variants that normalize identically dedup."""
+def test_upsert_album_uses_normalized_dedup_key(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Black Sabbath - Paranoid", "q1", "2026-05-14")
-    db.upsert("black sabbath – paranoid", "q2", "2026-05-15")
+    db.upsert_album(
+        WantedAlbum(artist="Led Zeppelin", artist_ja=None,
+                    album="Led Zeppelin II", year=1969),
+        query="q1", seen_at="2026-05-15",
+    )
+    # Same album, slightly different spelling — should dedup
+    db.upsert_album(
+        WantedAlbum(artist="led zeppelin", artist_ja=None,
+                    album="led zeppelin ii", year=None),
+        query="q2", seen_at="2026-05-15",
+    )
     assert db.count() == 1
 
 
-def test_list_orders_by_mentions_then_recency(temp_home):
+def test_upsert_album_handles_no_japanese_name(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Track A", "q1", "2026-05-14")
-    db.upsert("Track B", "q1", "2026-05-15")
-    db.upsert("Track B", "q2", "2026-05-15")          # B has 2 mentions
-    db.upsert("Track C", "q1", "2026-05-16")          # C is most recent, 1 mention
-    entries = db.list(limit=None)
-    names = [e.display_name for e in entries]
-    assert names == ["Track B", "Track C", "Track A"]
+    db.upsert_album(
+        WantedAlbum(artist="AC/DC", artist_ja=None,
+                    album="Back in Black", year=1980),
+        query="q", seen_at="2026-05-15",
+    )
+    e = db.list(limit=None)[0]
+    assert e.artist_ja is None
+    assert e.starter_kana is None
+    assert e.starter_latin == "A"
+
+
+def test_list_sort_mentions_orders_by_count_desc(temp_home):
+    db = WishlistDB(temp_home / "w.sqlite")
+    db.upsert_album(WantedAlbum("Z", None, "ZA", None), "q", "2026-05-14")
+    db.upsert_album(WantedAlbum("A", None, "AA", None), "q1", "2026-05-15")
+    db.upsert_album(WantedAlbum("A", None, "AA", None), "q2", "2026-05-15")
+    entries = db.list(limit=None, sort="mentions")
+    names = [e.artist_en for e in entries]
+    assert names == ["A", "Z"]  # A has 2 mentions, Z has 1
+
+
+def test_list_sort_latin_orders_alphabetically(temp_home):
+    db = WishlistDB(temp_home / "w.sqlite")
+    db.upsert_album(WantedAlbum("Pink Floyd", "ピンク・フロイド", "P", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q1", "2026-05-15")
+    db.upsert_album(WantedAlbum("Led Zeppelin", "レッド・ツェッペリン", "L", None), "q1", "2026-05-15")
+    entries = db.list(limit=None, sort="latin")
+    starters = [e.starter_latin for e in entries]
+    assert starters == ["A", "L", "P"]
+
+
+def test_list_sort_kana_orders_japanese_then_latin_only(temp_home):
+    db = WishlistDB(temp_home / "w.sqlite")
+    db.upsert_album(WantedAlbum("Queen", "クイーン", "Q", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("AC/DC", None, "A", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("Led Zeppelin", "レッド・ツェッペリン", "L", None), "q", "2026-05-15")
+    entries = db.list(limit=None, sort="kana")
+    # Japanese starters first (sorted), then Latin-only entries last.
+    starters_kana = [e.starter_kana for e in entries]
+    assert starters_kana[-1] is None  # AC/DC last
+    # The first two are kana entries; we don't assert their inner order
+    # beyond "Japanese entries appear before Latin-only entries".
+    assert all(s is not None for s in starters_kana[:-1])
 
 
 def test_list_default_limit_50(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
     for i in range(60):
-        db.upsert(f"Track {i}", "q", "2026-05-14")
+        db.upsert_album(
+            WantedAlbum(f"Artist {i:03d}", None, f"Album {i:03d}", None),
+            "q", "2026-05-15",
+        )
     assert len(db.list()) == 50
     assert len(db.list(limit=None)) == 60
 
 
 def test_list_since_filters_to_recent(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Old", "q", "2026-04-01")
-    db.upsert("New", "q", "2026-05-10")
+    db.upsert_album(WantedAlbum("Old", None, "Old Album", None), "q", "2026-04-01")
+    db.upsert_album(WantedAlbum("New", None, "New Album", None), "q", "2026-05-10")
     cutoff = _dt.date(2026, 5, 1)
     entries = db.list(since=cutoff, limit=None)
-    assert [e.display_name for e in entries] == ["New"]
+    assert [e.artist_en for e in entries] == ["New"]
 
 
 def test_remove_matching_deletes_only_listed_keys(temp_home):
+    from moodlist.wishlist import normalize_track_name
     db = WishlistDB(temp_home / "w.sqlite")
-    db.upsert("Black Sabbath - Paranoid", "q", "2026-05-14")
-    db.upsert("Iron Maiden - The Trooper", "q", "2026-05-14")
-    db.upsert("Metallica - One", "q", "2026-05-14")
+    db.upsert_album(WantedAlbum("A", None, "A1", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("B", None, "B1", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("C", None, "C1", None), "q", "2026-05-15")
     removed = db.remove_matching({
-        normalize_track_name("Black Sabbath - Paranoid"),
-        normalize_track_name("Metallica - One"),
+        normalize_track_name("A - A1"),
+        normalize_track_name("C - C1"),
     })
     assert removed == 2
-    names = [e.display_name for e in db.list(limit=None)]
-    assert names == ["Iron Maiden - The Trooper"]
+    names = [e.artist_en for e in db.list(limit=None)]
+    assert names == ["B"]
 
 
 def test_count_returns_total_rows(temp_home):
     db = WishlistDB(temp_home / "w.sqlite")
     assert db.count() == 0
-    db.upsert("Track A", "q", "2026-05-14")
-    db.upsert("Track B", "q", "2026-05-14")
+    db.upsert_album(WantedAlbum("A", None, "A1", None), "q", "2026-05-15")
+    db.upsert_album(WantedAlbum("B", None, "B1", None), "q", "2026-05-15")
     assert db.count() == 2
-
-
-def test_migration_from_misses_log_dedupes(temp_home):
-    """A misses.log with duplicates produces a deduped wishlist."""
-    log = temp_home / "misses.log"
-    log.write_text(
-        "2026-05-14\ttop 80s metal\tBlack Sabbath - Paranoid\n"
-        "2026-05-14\tbest metal\tBlack Sabbath - Paranoid\n"
-        "2026-05-14\tbest metal\tIron Maiden - Run to the Hills\n"
-    )
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    assert db.count() == 2
-    entries = {e.display_name: e for e in db.list(limit=None)}
-    assert entries["Black Sabbath - Paranoid"].mention_count == 2
-    assert sorted(entries["Black Sabbath - Paranoid"].queries_seen) == \
-        ["best metal", "top 80s metal"]
-
-
-def test_migration_does_not_run_when_wishlist_already_populated(temp_home):
-    log = temp_home / "misses.log"
-    log.write_text("2026-05-14\tq\tTrack X\n")
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    assert db.count() == 1  # migration ran once
-
-    # Add more to the log, recreate WishlistDB — should NOT re-import
-    log.write_text(log.read_text() + "2026-05-14\tq\tTrack Y\n")
-    db2 = WishlistDB(temp_home / "wishlist.sqlite")
-    assert db2.count() == 1  # still 1; migration is idempotent
-
-
-def test_migration_skips_malformed_lines_without_crashing(temp_home, capsys):
-    log = temp_home / "misses.log"
-    log.write_text(
-        "2026-05-14\tgood query\tGood Track\n"
-        "this is a malformed line with no tabs\n"
-        "\t\t\n"
-        "2026-05-15\tanother query\tAnother Track\n"
-    )
-    db = WishlistDB(temp_home / "wishlist.sqlite")
-    assert db.count() == 2
-    names = [e.display_name for e in db.list(limit=None)]
-    assert "Good Track" in names
-    assert "Another Track" in names
