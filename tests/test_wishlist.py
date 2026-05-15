@@ -166,3 +166,46 @@ def test_count_returns_total_rows(temp_home):
     db.upsert("Track A", "q", "2026-05-14")
     db.upsert("Track B", "q", "2026-05-14")
     assert db.count() == 2
+
+
+def test_migration_from_misses_log_dedupes(temp_home):
+    """A misses.log with duplicates produces a deduped wishlist."""
+    log = temp_home / "misses.log"
+    log.write_text(
+        "2026-05-14\ttop 80s metal\tBlack Sabbath - Paranoid\n"
+        "2026-05-14\tbest metal\tBlack Sabbath - Paranoid\n"
+        "2026-05-14\tbest metal\tIron Maiden - Run to the Hills\n"
+    )
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    assert db.count() == 2
+    entries = {e.display_name: e for e in db.list(limit=None)}
+    assert entries["Black Sabbath - Paranoid"].mention_count == 2
+    assert sorted(entries["Black Sabbath - Paranoid"].queries_seen) == \
+        ["best metal", "top 80s metal"]
+
+
+def test_migration_does_not_run_when_wishlist_already_populated(temp_home):
+    log = temp_home / "misses.log"
+    log.write_text("2026-05-14\tq\tTrack X\n")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    assert db.count() == 1  # migration ran once
+
+    # Add more to the log, recreate WishlistDB — should NOT re-import
+    log.write_text(log.read_text() + "2026-05-14\tq\tTrack Y\n")
+    db2 = WishlistDB(temp_home / "wishlist.sqlite")
+    assert db2.count() == 1  # still 1; migration is idempotent
+
+
+def test_migration_skips_malformed_lines_without_crashing(temp_home, capsys):
+    log = temp_home / "misses.log"
+    log.write_text(
+        "2026-05-14\tgood query\tGood Track\n"
+        "this is a malformed line with no tabs\n"
+        "\t\t\n"
+        "2026-05-15\tanother query\tAnother Track\n"
+    )
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    assert db.count() == 2
+    names = [e.display_name for e in db.list(limit=None)]
+    assert "Good Track" in names
+    assert "Another Track" in names

@@ -93,6 +93,34 @@ class WishlistDB:
             conn.executescript(SCHEMA)
         finally:
             conn.close()
+        # One-time migration from misses.log if wishlist is empty.
+        if self.count() == 0:
+            self._migrate_from_misses_log(self.db_path.parent / "misses.log")
+
+    def _migrate_from_misses_log(self, log_path: Path) -> None:
+        import sys
+        if not log_path.exists():
+            return
+        try:
+            content = log_path.read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"wishlist migration: could not read {log_path}: {e}",
+                  file=sys.stderr)
+            return
+        for line_num, line in enumerate(content.splitlines(), start=1):
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            date_str, query, display = parts[0], parts[1], parts[2]
+            if not date_str.strip() or not query.strip() or not display.strip():
+                continue
+            try:
+                self.upsert(display.strip(), query.strip(), date_str.strip())
+            except Exception as e:
+                print(
+                    f"wishlist migration: skipping line {line_num}: {e}",
+                    file=sys.stderr,
+                )
 
     def upsert(self, display_name: str, query: str, seen_at: str) -> bool:
         """Insert or update one entry. Returns True if newly inserted,
