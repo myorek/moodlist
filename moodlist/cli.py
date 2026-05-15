@@ -12,6 +12,7 @@ from .cache import QueryCache, normalize_query
 from .config import load_config
 from .indexer import Indexer
 from .types import Track
+from .wishlist import WishlistDB, normalize_track_name
 
 
 def _load_full_tracks(db_path: Path, picks: list[int]) -> list[Track]:
@@ -241,6 +242,27 @@ def main(argv: list[str] | None = None) -> int:
     cache.store(args.query, library_version, playlist_path)
 
     if result.wanted_but_missing:
+        # 2. Wishlist upsert with library pre-filter.
+        # Initialise WishlistDB BEFORE writing misses.log so that the
+        # one-time migration (which reads misses.log) runs on the old
+        # log rather than the entries we're about to append.
+        try:
+            library_keys = {
+                normalize_track_name(f"{t['artist']} - {t['title']}")
+                for t in library
+            }
+            wishlist_db = WishlistDB(moodlist_dir / "wishlist.sqlite")
+            for m in result.wanted_but_missing:
+                key = normalize_track_name(m)
+                if key and key not in library_keys:
+                    wishlist_db.upsert(
+                        display_name=m, query=args.query, seen_at=today,
+                    )
+        except Exception as e:
+            print(f"wishlist: write failed ({e}); continuing",
+                  file=sys.stderr)
+
+        # 1. Existing misses.log audit trail (unchanged).
         misses = moodlist_dir / "misses.log"
         with misses.open("a") as f:
             for m in result.wanted_but_missing:

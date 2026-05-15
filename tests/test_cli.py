@@ -2,6 +2,7 @@ import json
 import sqlite3
 
 from moodlist import cli
+from moodlist.wishlist import WishlistDB
 
 
 def _seed_library(temp_home):
@@ -220,3 +221,48 @@ def test_no_debug_flag_passes_debug_false_to_agent(temp_home, tmp_path,
     # debug should be False (or absent — both acceptable)
     debug_arg = pick_mock.call_args.kwargs.get("debug", False)
     assert debug_arg is False
+
+
+def test_wishlist_upsert_runs_on_cache_miss(temp_home, tmp_path, mocker):
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="r",
+        wanted_but_missing=["Led Zeppelin - Stairway to Heaven",
+                            "Pink Floyd - Comfortably Numb"],
+        needs_live=False,
+        raw_picks=[1, 2],
+        pick_reasons={},
+    ))
+
+    cli.main(["top rock", "--dry-run"])
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    assert db.count() == 2
+    names = sorted(e.display_name for e in db.list(limit=None))
+    assert names == ["Led Zeppelin - Stairway to Heaven",
+                     "Pink Floyd - Comfortably Numb"]
+
+
+def test_wishlist_skips_tracks_already_in_library(temp_home, tmp_path, mocker):
+    """If Haiku suggests a track the user already owns (under any
+    spelling), do NOT add it to the wishlist."""
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    # _seed_library inserts: Metallica - Enter Sandman, Queen - Bohemian Rhapsody
+    mocker.patch("moodlist.cli.agent.pick", return_value=mocker.MagicMock(
+        picks=[1, 2], reasoning="r",
+        wanted_but_missing=[
+            "Metallica – Enter Sandman",          # already owned, em dash
+            "Led Zeppelin - Stairway to Heaven",  # not owned
+        ],
+        needs_live=False,
+        raw_picks=[1, 2],
+        pick_reasons={},
+    ))
+
+    cli.main(["top rock", "--dry-run"])
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    names = [e.display_name for e in db.list(limit=None)]
+    assert names == ["Led Zeppelin - Stairway to Heaven"]
