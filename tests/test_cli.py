@@ -350,10 +350,17 @@ def test_wishlist_subcommand_all_flag_disables_limit(temp_home, tmp_path,
 
 
 def test_wishlist_subcommand_since_filter(temp_home, tmp_path, capsys):
+    """Use date arithmetic relative to today so the test doesn't rot
+    as the calendar advances."""
+    import datetime as _dt
+    today = _dt.date.today()
+    old_date = (today - _dt.timedelta(days=90)).isoformat()
+    recent_date = (today - _dt.timedelta(days=5)).isoformat()
+
     _write_config(temp_home, tmp_path / "Music")
     db = WishlistDB(temp_home / "wishlist.sqlite")
-    db.upsert("Old Track", "q", "2026-04-01")
-    db.upsert("Recent Track", "q", "2026-05-13")
+    db.upsert("Old Track", "q", old_date)
+    db.upsert("Recent Track", "q", recent_date)
 
     cli.main(["wishlist", "--since", "30", "--json"])
     parsed = json.loads(capsys.readouterr().out)
