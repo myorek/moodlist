@@ -447,8 +447,9 @@ def test_migration_idempotent_when_v1_3_schema_already_present(temp_home, mocker
 
 
 def test_migration_skipped_when_resolver_fails(temp_home, mocker):
-    """If the Haiku resolver raises, the v1.2 table is preserved
-    intact and migration retries on the next run."""
+    """If the Haiku resolver raises, the v1.2 data is preserved in a
+    pending-retry table and the v1.3 schema is created so subsequent
+    operations don't crash. Migration retries on the next run."""
     db_path = temp_home / "wishlist.sqlite"
     _make_v1_2_wishlist(db_path, [
         ("zep1", "Led Zeppelin - Whole Lotta Love", "2026-05-14", "2026-05-15"),
@@ -458,13 +459,71 @@ def test_migration_skipped_when_resolver_fails(temp_home, mocker):
     _write_config_for_migration(temp_home)
 
     # Construction does NOT crash even though resolver failed
-    WishlistDB(db_path)
+    db = WishlistDB(db_path)
 
-    # The v1.2 table is still in place
+    # The live `wishlist` table now has v1.3 schema (empty).
     conn = sqlite3.connect(db_path)
     try:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(wishlist)")}
+        live_cols = {row[1] for row in conn.execute("PRAGMA table_info(wishlist)")}
+        pending_cols = {row[1] for row in conn.execute(
+            "PRAGMA table_info(wishlist_v1_2_pending)"
+        )}
     finally:
         conn.close()
-    assert "display_name" in cols
-    assert "artist_en" not in cols
+    assert "artist_en" in live_cols
+    assert "display_name" not in live_cols
+    # The v1.2 data is preserved under the pending name.
+    assert "display_name" in pending_cols
+    # No crash on list/count even though migration deferred.
+    assert db.count() == 0
+    assert db.list(limit=None) == []
+
+
+def test_migration_retries_from_pending_on_next_init(temp_home, mocker):
+    """If a migration was deferred (data left in wishlist_v1_2_pending),
+    the next WishlistDB construction retries the migration and, on
+    success, populates the v1.3 wishlist + renames pending to backup."""
+    db_path = temp_home / "wishlist.sqlite"
+    _make_v1_2_wishlist(db_path, [
+        ("zep1", "Led Zeppelin - Whole Lotta Love", "2026-05-14", "2026-05-15"),
+    ])
+    _write_config_for_migration(temp_home)
+
+    # First attempt: resolver fails → pending stash created
+    mocker.patch("moodlist.wishlist.resolve_albums",
+                 side_effect=RuntimeError("network down"))
+    WishlistDB(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='wishlist_v1_2_pending'"
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+    # Second attempt: resolver succeeds → migration completes
+    mocker.patch("moodlist.wishlist.resolve_albums", return_value=[
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン",
+                    "Led Zeppelin II", 1969),
+    ])
+    db = WishlistDB(db_path)
+    entries = db.list(limit=None)
+    assert len(entries) == 1
+    assert entries[0].artist_en == "Led Zeppelin"
+
+    # Pending table is gone (renamed to backup); backup is present.
+    conn = sqlite3.connect(db_path)
+    try:
+        pending = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='wishlist_v1_2_pending'"
+        ).fetchone()
+        backup = conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='wishlist_v1_2_backup'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert pending is None
+    assert backup is not None

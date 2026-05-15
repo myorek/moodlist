@@ -114,15 +114,41 @@ class WishlistDB:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        # If a v1.2 table exists, migrate before creating v1.3 schema
+
+        # Step 1: handle any in-flight migration state.
         if self._detect_v1_2_schema():
-            self._migrate_v1_2_to_v1_3()
-            return
+            # Live v1.2 table — attempt fresh migration.
+            self._migrate_from_table("wishlist", first_attempt=True)
+        elif self._has_table("wishlist_v1_2_pending"):
+            # A previous migration was deferred; retry from the stash.
+            self._migrate_from_table("wishlist_v1_2_pending",
+                                     first_attempt=False)
+
+        # Step 2: always ensure v1.3 schema exists. If migration succeeded,
+        # the table is already in place; CREATE TABLE IF NOT EXISTS is a
+        # no-op. If migration was deferred, this creates an empty v1.3
+        # wishlist so list/count/upsert_album don't crash on missing columns
+        # (the v1.2 data is preserved in `wishlist_v1_2_pending` until
+        # the next __init__ call retries).
         conn = sqlite3.connect(self.db_path)
         try:
             conn.executescript(SCHEMA)
         finally:
             conn.close()
+
+    def _has_table(self, table_name: str) -> bool:
+        if not self.db_path.exists():
+            return False
+        conn = sqlite3.connect(self.db_path)
+        try:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name=?",
+                (table_name,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return row is not None
 
     def _detect_v1_2_schema(self) -> bool:
         """Return True if the existing wishlist table looks like v1.2
@@ -138,26 +164,35 @@ class WishlistDB:
             conn.close()
         return "display_name" in cols and "artist_en" not in cols
 
-    def _migrate_v1_2_to_v1_3(self) -> None:
-        """Resolve v1.2 track-level rows into v1.3 album rows via a
-        single Haiku call. On any failure, leave v1.2 table intact and
-        return; retries on next construction."""
+    def _migrate_from_table(
+        self, source_table: str, *, first_attempt: bool
+    ) -> None:
+        """Resolve v1.2 track-level rows from `source_table` into v1.3
+        album rows via a single Haiku call. On any failure, stash the
+        source data (renaming to `wishlist_v1_2_pending` if needed) so a
+        subsequent __init__ call can retry.
+
+        `first_attempt=True` means we are migrating from the live
+        `wishlist` table. `first_attempt=False` means we are retrying
+        from the `wishlist_v1_2_pending` stash.
+        """
         from .config import load_config
+
         conn = sqlite3.connect(self.db_path)
         try:
             rows = conn.execute(
-                "SELECT display_name, first_seen, last_seen, queries_seen "
-                "FROM wishlist"
+                f"SELECT display_name, first_seen, last_seen, queries_seen "
+                f"FROM {source_table}"
             ).fetchall()
         finally:
             conn.close()
 
         if not rows:
-            # No data; just create the new schema and drop the old table
+            # No data to migrate; just drop the source table so the v1.3
+            # schema can take over cleanly.
             conn = sqlite3.connect(self.db_path)
             try:
-                conn.executescript("DROP TABLE wishlist;")
-                conn.executescript(SCHEMA)
+                conn.executescript(f"DROP TABLE {source_table};")
             finally:
                 conn.close()
             return
@@ -166,9 +201,12 @@ class WishlistDB:
             cfg = load_config()
         except Exception as e:
             print(
-                f"wishlist: v1.3 migration deferred (config error: {e})",
+                f"wishlist: v1.3 migration deferred (config error: {e}); "
+                f"will retry next run",
                 file=sys.stderr,
             )
+            if first_attempt:
+                self._stash_for_retry()
             return
 
         track_strings = [r[0] for r in rows]
@@ -178,43 +216,33 @@ class WishlistDB:
             )
         except Exception as e:
             print(
-                f"wishlist: v1.3 migration deferred ({e}); will retry next run",
+                f"wishlist: v1.3 migration deferred ({e}); "
+                f"will retry next run",
                 file=sys.stderr,
             )
+            if first_attempt:
+                self._stash_for_retry()
             return
 
-        # Aggregate stats: global min/max across all source rows.
+        # Resolver succeeded. Aggregate stats and apply.
         all_first = min(r[1] for r in rows)
         all_last = max(r[2] for r in rows)
+        n_albums = max(1, len(albums))
+        per_album = max(1, len(rows) // n_albums)
 
-        # Create new schema (rename old table to v1_2 backup first)
         conn = sqlite3.connect(self.db_path)
         try:
-            conn.executescript("""
-                ALTER TABLE wishlist RENAME TO wishlist_v1_2_backup;
-            """)
+            # Rename source to backup (preserves data permanently after
+            # successful migration). Drop any existing backup first.
+            if self._has_table_in_conn(conn, "wishlist_v1_2_backup"):
+                conn.execute("DROP TABLE wishlist_v1_2_backup")
+            conn.executescript(
+                f"ALTER TABLE {source_table} RENAME TO wishlist_v1_2_backup;"
+            )
             conn.executescript(SCHEMA)
-
-            # Insert each resolved album. mention_count divides source rows
-            # evenly across resolved albums (minimum 1).
-            n_albums = max(1, len(albums))
-            per_album = max(1, len(rows) // n_albums)
             for album in albums:
-                key = _album_dedup_key(album.artist, album.album)
-                if not key:
-                    continue
-                starter_latin, starter_kana = derive_starters(
-                    album.artist, album.artist_ja
-                )
-                conn.execute(
-                    "INSERT OR IGNORE INTO wishlist "
-                    "(dedup_key, artist_en, artist_ja, starter_latin, "
-                    " starter_kana, album_en, year, first_seen, last_seen, "
-                    " mention_count, queries_seen) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')",
-                    (key, album.artist, album.artist_ja, starter_latin,
-                     starter_kana, album.album, album.year,
-                     all_first, all_last, per_album),
+                self._insert_migrated_album(
+                    conn, album, per_album, all_first, all_last,
                 )
             conn.commit()
             print(
@@ -225,6 +253,55 @@ class WishlistDB:
             )
         finally:
             conn.close()
+
+    @staticmethod
+    def _has_table_in_conn(conn: sqlite3.Connection, table_name: str) -> bool:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def _stash_for_retry(self) -> None:
+        """Rename the live v1.2 `wishlist` table to `wishlist_v1_2_pending`
+        so __init__ can create a v1.3 schema alongside and retry the
+        migration on the next call."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            if self._has_table_in_conn(conn, "wishlist_v1_2_pending"):
+                # Stale stash from a prior aborted attempt — drop it.
+                conn.execute("DROP TABLE wishlist_v1_2_pending")
+            conn.executescript(
+                "ALTER TABLE wishlist RENAME TO wishlist_v1_2_pending;"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _insert_migrated_album(
+        self,
+        conn: sqlite3.Connection,
+        album: WantedAlbum,
+        mention_count: int,
+        first_seen: str,
+        last_seen: str,
+    ) -> None:
+        key = _album_dedup_key(album.artist, album.album)
+        if not key:
+            return
+        starter_latin, starter_kana = derive_starters(
+            album.artist, album.artist_ja
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO wishlist "
+            "(dedup_key, artist_en, artist_ja, starter_latin, "
+            " starter_kana, album_en, year, first_seen, last_seen, "
+            " mention_count, queries_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')",
+            (key, album.artist, album.artist_ja, starter_latin,
+             starter_kana, album.album, album.year,
+             first_seen, last_seen, mention_count),
+        )
 
     def upsert_album(
         self, album: WantedAlbum, query: str, seen_at: str
@@ -391,7 +468,7 @@ def resolve_albums(
         system=_RESOLVER_SYSTEM_PROMPT,
         user_blocks=[{"type": "text", "text": user_text}],
         temperature=0.0,
-        max_tokens=2048,
+        max_tokens=8192,
     )
 
     out: list[WantedAlbum] = []
