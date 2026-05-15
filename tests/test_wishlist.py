@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 import sqlite3
 
-from moodlist.wishlist import WishlistDB, normalize_track_name
+from moodlist.wishlist import WishlistDB, derive_starters, normalize_track_name
 
 
 def test_normalize_lowercases_and_strips_whitespace():
@@ -56,6 +56,39 @@ def test_normalize_handles_unicode_nfkc():
 def test_normalize_empty_string_returns_empty():
     assert normalize_track_name("") == ""
     assert normalize_track_name("   ") == ""
+
+
+def test_derive_starters_latin_only_no_japanese_name():
+    assert derive_starters("AC/DC", None) == ("A", None)
+    assert derive_starters("U2", None) == ("U", None)
+
+
+def test_derive_starters_japanese_present_uses_first_kana():
+    assert derive_starters("Led Zeppelin", "レッド・ツェッペリン") == ("L", "レ")
+    assert derive_starters("Pink Floyd", "ピンク・フロイド") == ("P", "ピ")
+    assert derive_starters("Queen", "クイーン") == ("Q", "ク")
+
+
+def test_derive_starters_strips_leading_the_in_english():
+    assert derive_starters("The Who", "ザ・フー") == ("W", "フ")
+    assert derive_starters("The Beatles", None) == ("B", None)
+    # Case-insensitive on "The"
+    assert derive_starters("the doors", None) == ("D", None)
+
+
+def test_derive_starters_strips_leading_za_dot_in_japanese():
+    # "ザ・" (za + middle dot) is the Japanese "The"; strip it before
+    # taking the first character.
+    assert derive_starters("The Rolling Stones",
+                           "ザ・ローリング・ストーンズ") == ("R", "ロ")
+
+
+def test_derive_starters_returns_question_mark_for_empty_english():
+    assert derive_starters("", None) == ("?", None)
+
+
+def test_derive_starters_uppercases_latin():
+    assert derive_starters("madonna", "マドンナ") == ("M", "マ")
 
 
 def test_wishlistdb_creates_schema_on_init(temp_home):

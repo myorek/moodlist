@@ -61,6 +61,31 @@ def normalize_track_name(s: str) -> str:
     return s
 
 
+def derive_starters(
+    artist_en: str, artist_ja: str | None
+) -> tuple[str, str | None]:
+    """Compute the bin starter character for an artist.
+
+    Returns (starter_latin, starter_kana). starter_kana is None when
+    artist_ja is None. Leading "The " (English) and "ザ・" (Japanese)
+    are stripped before taking the first character.
+    """
+    # Latin: strip leading "the " (case-insensitive)
+    latin_source = artist_en
+    if latin_source.lower().startswith("the "):
+        latin_source = latin_source[4:]
+    starter_latin = latin_source[:1].upper() if latin_source else "?"
+
+    # Kana: strip leading "ザ・" then take first character
+    starter_kana: str | None = None
+    if artist_ja:
+        kana_source = artist_ja
+        if kana_source.startswith("ザ・"):
+            kana_source = kana_source[2:]
+        starter_kana = kana_source[:1] if kana_source else None
+    return starter_latin, starter_kana
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS wishlist (
     dedup_key      TEXT PRIMARY KEY,
