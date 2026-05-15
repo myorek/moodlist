@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as _dt
 import re
 import sqlite3
+import sys
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -113,9 +114,115 @@ class WishlistDB:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        # If a v1.2 table exists, migrate before creating v1.3 schema
+        if self._detect_v1_2_schema():
+            self._migrate_v1_2_to_v1_3()
+            return
         conn = sqlite3.connect(self.db_path)
         try:
             conn.executescript(SCHEMA)
+        finally:
+            conn.close()
+
+    def _detect_v1_2_schema(self) -> bool:
+        """Return True if the existing wishlist table looks like v1.2
+        (has display_name column, lacks artist_en)."""
+        if not self.db_path.exists():
+            return False
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(wishlist)")
+            }
+        finally:
+            conn.close()
+        return "display_name" in cols and "artist_en" not in cols
+
+    def _migrate_v1_2_to_v1_3(self) -> None:
+        """Resolve v1.2 track-level rows into v1.3 album rows via a
+        single Haiku call. On any failure, leave v1.2 table intact and
+        return; retries on next construction."""
+        from .config import load_config
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT display_name, first_seen, last_seen, queries_seen "
+                "FROM wishlist"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            # No data; just create the new schema and drop the old table
+            conn = sqlite3.connect(self.db_path)
+            try:
+                conn.executescript("DROP TABLE wishlist;")
+                conn.executescript(SCHEMA)
+            finally:
+                conn.close()
+            return
+
+        try:
+            cfg = load_config()
+        except Exception as e:
+            print(
+                f"wishlist: v1.3 migration deferred (config error: {e})",
+                file=sys.stderr,
+            )
+            return
+
+        track_strings = [r[0] for r in rows]
+        try:
+            albums = resolve_albums(
+                track_strings, api_key=cfg.api_key, model=cfg.model,
+            )
+        except Exception as e:
+            print(
+                f"wishlist: v1.3 migration deferred ({e}); will retry next run",
+                file=sys.stderr,
+            )
+            return
+
+        # Aggregate stats: global min/max across all source rows.
+        all_first = min(r[1] for r in rows)
+        all_last = max(r[2] for r in rows)
+
+        # Create new schema (rename old table to v1_2 backup first)
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.executescript("""
+                ALTER TABLE wishlist RENAME TO wishlist_v1_2_backup;
+            """)
+            conn.executescript(SCHEMA)
+
+            # Insert each resolved album. mention_count divides source rows
+            # evenly across resolved albums (minimum 1).
+            n_albums = max(1, len(albums))
+            per_album = max(1, len(rows) // n_albums)
+            for album in albums:
+                key = _album_dedup_key(album.artist, album.album)
+                if not key:
+                    continue
+                starter_latin, starter_kana = derive_starters(
+                    album.artist, album.artist_ja
+                )
+                conn.execute(
+                    "INSERT OR IGNORE INTO wishlist "
+                    "(dedup_key, artist_en, artist_ja, starter_latin, "
+                    " starter_kana, album_en, year, first_seen, last_seen, "
+                    " mention_count, queries_seen) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')",
+                    (key, album.artist, album.artist_ja, starter_latin,
+                     starter_kana, album.album, album.year,
+                     all_first, all_last, per_album),
+                )
+            conn.commit()
+            print(
+                f"wishlist: migrated {len(rows)} v1.2 entries → "
+                f"{len(albums)} v1.3 albums "
+                f"(old table preserved as wishlist_v1_2_backup)",
+                file=sys.stderr,
+            )
         finally:
             conn.close()
 

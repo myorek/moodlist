@@ -325,3 +325,146 @@ def test_resolve_albums_passes_strings_in_prompt(mocker):
         if isinstance(b, dict) and "text" in b
     )
     assert "Led Zeppelin - Whole Lotta Love" in user_text
+
+
+def _make_v1_2_wishlist(db_path, rows):
+    """Create a wishlist.sqlite with v1.2 schema and the given rows.
+    Each row tuple: (dedup_key, display_name, first_seen, last_seen)."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript("""
+            CREATE TABLE wishlist (
+                dedup_key      TEXT PRIMARY KEY,
+                display_name   TEXT NOT NULL,
+                first_seen     TEXT NOT NULL,
+                last_seen      TEXT NOT NULL,
+                mention_count  INTEGER NOT NULL DEFAULT 1,
+                queries_seen   TEXT NOT NULL DEFAULT ''
+            );
+        """)
+        for dedup, name, first, last in rows:
+            conn.execute(
+                "INSERT INTO wishlist "
+                "(dedup_key, display_name, first_seen, last_seen, "
+                " mention_count, queries_seen) VALUES (?, ?, ?, ?, 1, '')",
+                (dedup, name, first, last),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _write_config_for_migration(temp_home):
+    """Helper: write a config.toml so the migration can read the API key."""
+    cfg = temp_home / "config.toml"
+    cfg.write_text(
+        '[anthropic]\n'
+        'api_key = "sk-test"\n'
+        'model   = "claude-haiku-4-5-20251001"\n'
+        '\n'
+        '[library]\n'
+        'root = "~/Music"\n'
+        'extensions = ["flac"]\n'
+        '\n'
+        '[foobar2000]\n'
+        'app = "foobar2000"\n'
+        '\n'
+        '[playlist]\n'
+        'default_count = 20\n'
+        'temperature   = 0.4\n'
+    )
+
+
+def test_migration_detects_v1_2_schema(temp_home, mocker):
+    """v1.2 schema (display_name column, no artist_en) triggers migration."""
+    db_path = temp_home / "wishlist.sqlite"
+    _make_v1_2_wishlist(db_path, [
+        ("led zeppelin whole lotta love",
+         "Led Zeppelin - Whole Lotta Love", "2026-05-14", "2026-05-15"),
+    ])
+    # Mock resolver to return one album record
+    mocker.patch("moodlist.wishlist.resolve_albums", return_value=[
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン",
+                    "Led Zeppelin II", 1969),
+    ])
+    _write_config_for_migration(temp_home)
+
+    db = WishlistDB(db_path)
+    # After migration the new schema is in place
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(wishlist)")}
+    finally:
+        conn.close()
+    assert "artist_en" in cols
+    # Migrated row present
+    entries = db.list(limit=None)
+    assert len(entries) == 1
+    assert entries[0].artist_en == "Led Zeppelin"
+    assert entries[0].album_en == "Led Zeppelin II"
+
+
+def test_migration_aggregates_tracks_into_albums(temp_home, mocker):
+    """Two tracks from the same album collapse to one wishlist row."""
+    db_path = temp_home / "wishlist.sqlite"
+    _make_v1_2_wishlist(db_path, [
+        ("zep1", "Led Zeppelin - Whole Lotta Love", "2026-05-14", "2026-05-14"),
+        ("zep2", "Led Zeppelin - Heartbreaker", "2026-05-15", "2026-05-15"),
+    ])
+    # Both resolve to the same album → resolver returns dedup'd list
+    mocker.patch("moodlist.wishlist.resolve_albums", return_value=[
+        WantedAlbum("Led Zeppelin", "レッド・ツェッペリン",
+                    "Led Zeppelin II", 1969),
+    ])
+    _write_config_for_migration(temp_home)
+
+    db = WishlistDB(db_path)
+    entries = db.list(limit=None)
+    assert len(entries) == 1
+    # mention_count aggregates: 2 source rows → 2 mentions
+    assert entries[0].mention_count == 2
+    # first_seen is the earliest, last_seen is the latest
+    assert entries[0].first_seen == "2026-05-14"
+    assert entries[0].last_seen == "2026-05-15"
+
+
+def test_migration_idempotent_when_v1_3_schema_already_present(temp_home, mocker):
+    """Re-instantiating WishlistDB on a v1.3 table does not re-migrate."""
+    db_path = temp_home / "wishlist.sqlite"
+    # First, set up a v1.3 schema with one row
+    db1 = WishlistDB(db_path)
+    db1.upsert_album(
+        WantedAlbum("A", None, "X", None), "q", "2026-05-15",
+    )
+    assert db1.count() == 1
+
+    # resolver should NOT be called this time
+    resolver_mock = mocker.patch("moodlist.wishlist.resolve_albums")
+    db2 = WishlistDB(db_path)
+    assert db2.count() == 1
+    resolver_mock.assert_not_called()
+
+
+def test_migration_skipped_when_resolver_fails(temp_home, mocker):
+    """If the Haiku resolver raises, the v1.2 table is preserved
+    intact and migration retries on the next run."""
+    db_path = temp_home / "wishlist.sqlite"
+    _make_v1_2_wishlist(db_path, [
+        ("zep1", "Led Zeppelin - Whole Lotta Love", "2026-05-14", "2026-05-15"),
+    ])
+    mocker.patch("moodlist.wishlist.resolve_albums",
+                 side_effect=RuntimeError("network down"))
+    _write_config_for_migration(temp_home)
+
+    # Construction does NOT crash even though resolver failed
+    WishlistDB(db_path)
+
+    # The v1.2 table is still in place
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(wishlist)")}
+    finally:
+        conn.close()
+    assert "display_name" in cols
+    assert "artist_en" not in cols
