@@ -266,3 +266,28 @@ def test_wishlist_skips_tracks_already_in_library(temp_home, tmp_path, mocker):
     db = WishlistDB(temp_home / "wishlist.sqlite")
     names = [e.display_name for e in db.list(limit=None)]
     assert names == ["Led Zeppelin - Stairway to Heaven"]
+
+
+def test_reindex_prunes_wishlist_of_newly_owned_tracks(temp_home, tmp_path,
+                                                       mocker):
+    """After reindex, wishlist entries matching the new library are removed."""
+    _seed_library(temp_home)
+    _write_config(temp_home, tmp_path / "Music")
+
+    # Pre-populate the wishlist with one track that IS in the seeded library
+    # and one that ISN'T.
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert("Metallica - Enter Sandman", "q", "2026-05-14")  # in library
+    db.upsert("Led Zeppelin - Stairway to Heaven", "q", "2026-05-14")  # not
+    assert db.count() == 2
+
+    # Force --reindex but stub out the actual scan; we want is_stale=True
+    # and load_compact() to return our seeded library.
+    mocker.patch("moodlist.indexer.Indexer.is_stale", return_value=False)
+    mocker.patch("moodlist.indexer.Indexer.build", return_value=2)
+    # load_compact() reads library.cache.json that _seed_library already wrote.
+
+    cli.main(["--reindex", "--dry-run"])
+    db2 = WishlistDB(temp_home / "wishlist.sqlite")
+    names = [e.display_name for e in db2.list(limit=None)]
+    assert names == ["Led Zeppelin - Stairway to Heaven"]

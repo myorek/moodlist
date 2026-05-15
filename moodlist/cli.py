@@ -107,6 +107,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.reindex or ix.is_stale():
         ix.build()
+        # Prune wishlist entries that now match library tracks.
+        try:
+            library = ix.load_compact()
+            library_keys = {
+                normalize_track_name(f"{t['artist']} - {t['title']}")
+                for t in library
+            }
+            wishlist_db = WishlistDB(moodlist_dir / "wishlist.sqlite")
+            removed = wishlist_db.remove_matching(library_keys)
+            if removed:
+                print(f"wishlist: pruned {removed} entries now in library",
+                      file=sys.stderr)
+        except Exception as e:
+            print(f"wishlist: prune failed ({e}); continuing",
+                  file=sys.stderr)
 
     if not args.query.strip():
         return _alfred_error("Type a query, e.g. `ml top 80s metal`") \
