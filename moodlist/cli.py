@@ -73,7 +73,67 @@ def _redact_api_key(key: str) -> str:
     return key[:8] + "***"
 
 
+def _wishlist_command(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="moodlist wishlist")
+    parser.add_argument("--all", action="store_true",
+                        help="show every entry, not just the top 50")
+    parser.add_argument("--since", type=int, metavar="DAYS",
+                        help="only entries seen in the last N days")
+    parser.add_argument("--json", action="store_true",
+                        help="emit machine-readable JSON")
+    args = parser.parse_args(argv)
+
+    try:
+        cfg = load_config()
+    except (FileNotFoundError, ValueError) as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+    db = WishlistDB(cfg.moodlist_dir / "wishlist.sqlite")
+    total = db.count()
+    since_date: _dt.date | None = None
+    if args.since is not None:
+        since_date = _dt.date.today() - _dt.timedelta(days=args.since)
+    limit = None if args.all else 50
+    entries = db.list(limit=limit, since=since_date)
+
+    if args.json:
+        payload = [
+            {
+                "display_name": e.display_name,
+                "first_seen": e.first_seen,
+                "last_seen": e.last_seen,
+                "mention_count": e.mention_count,
+                "queries_seen": e.queries_seen,
+            }
+            for e in entries
+        ]
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if total == 0:
+        print("Wishlist is empty — try running a few queries first, e.g.")
+        print('  moodlist "top 80s metal"')
+        return 0
+
+    header = f"Wishlist — {total} unique tracks"
+    if not args.all and total > 50:
+        header += "\n(showing top 50; run `moodlist wishlist --all` for full list)"
+    print(header)
+    print()
+    print(f"  {'Mentions':<8}  {'Last seen':<11}  Track")
+    print(f"  {'-' * 8:<8}  {'-' * 11:<11}  {'-' * 49}")
+    for e in entries:
+        print(f"  {e.mention_count:>8}  {e.last_seen:<11}  {e.display_name}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "wishlist":
+        return _wishlist_command(argv[1:])
+
     parser = argparse.ArgumentParser(prog="moodlist")
     parser.add_argument("query", nargs="?", default="")
     parser.add_argument("--alfred-json", action="store_true")

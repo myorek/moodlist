@@ -291,3 +291,72 @@ def test_reindex_prunes_wishlist_of_newly_owned_tracks(temp_home, tmp_path,
     db2 = WishlistDB(temp_home / "wishlist.sqlite")
     names = [e.display_name for e in db2.list(limit=None)]
     assert names == ["Led Zeppelin - Stairway to Heaven"]
+
+
+def test_wishlist_subcommand_prints_table_with_entries(temp_home, tmp_path,
+                                                        mocker, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert("Black Sabbath - Paranoid", "top metal", "2026-05-14")
+    db.upsert("Black Sabbath - Paranoid", "best 80s", "2026-05-15")
+    db.upsert("Iron Maiden - The Trooper", "top metal", "2026-05-14")
+
+    exit_code = cli.main(["wishlist"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "Black Sabbath - Paranoid" in out
+    assert "Iron Maiden - The Trooper" in out
+    assert "Mentions" in out  # header row
+    assert "2" in out  # mention count for Paranoid
+
+
+def test_wishlist_subcommand_empty_prints_friendly_message(temp_home,
+                                                           tmp_path, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    WishlistDB(temp_home / "wishlist.sqlite")  # create empty
+    exit_code = cli.main(["wishlist"])
+    assert exit_code == 0
+    out = capsys.readouterr().out
+    assert "empty" in out.lower()
+
+
+def test_wishlist_subcommand_json_mode_emits_valid_json(temp_home,
+                                                        tmp_path, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert("Track A", "q1", "2026-05-14")
+    db.upsert("Track A", "q2", "2026-05-15")
+    db.upsert("Track B", "q1", "2026-05-14")
+
+    exit_code = cli.main(["wishlist", "--json"])
+    assert exit_code == 0
+    parsed = json.loads(capsys.readouterr().out)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+    by_name = {e["display_name"]: e for e in parsed}
+    assert by_name["Track A"]["mention_count"] == 2
+    assert sorted(by_name["Track A"]["queries_seen"]) == ["q1", "q2"]
+
+
+def test_wishlist_subcommand_all_flag_disables_limit(temp_home, tmp_path,
+                                                     capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    for i in range(55):
+        db.upsert(f"Track {i:03d}", "q", "2026-05-14")
+    cli.main(["wishlist", "--all", "--json"])
+    parsed = json.loads(capsys.readouterr().out)
+    assert len(parsed) == 55
+
+
+def test_wishlist_subcommand_since_filter(temp_home, tmp_path, capsys):
+    _write_config(temp_home, tmp_path / "Music")
+    db = WishlistDB(temp_home / "wishlist.sqlite")
+    db.upsert("Old Track", "q", "2026-04-01")
+    db.upsert("Recent Track", "q", "2026-05-13")
+
+    cli.main(["wishlist", "--since", "30", "--json"])
+    parsed = json.loads(capsys.readouterr().out)
+    names = [e["display_name"] for e in parsed]
+    assert "Recent Track" in names
+    assert "Old Track" not in names
