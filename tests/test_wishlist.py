@@ -257,3 +257,71 @@ def test_count_returns_total_rows(temp_home):
     db.upsert_album(WantedAlbum("A", None, "A1", None), "q", "2026-05-15")
     db.upsert_album(WantedAlbum("B", None, "B1", None), "q", "2026-05-15")
     assert db.count() == 2
+
+
+def test_resolve_albums_returns_wantedalbum_list(mocker):
+    from moodlist.wishlist import resolve_albums
+
+    mocker.patch("moodlist.wishlist.llm.call", return_value={
+        "albums": [
+            {"artist": "Led Zeppelin", "artist_ja": "レッド・ツェッペリン",
+             "album": "Led Zeppelin II", "year": 1969},
+            {"artist": "AC/DC", "artist_ja": None,
+             "album": "Back in Black", "year": 1980},
+        ]
+    })
+    result = resolve_albums(
+        ["Led Zeppelin - Whole Lotta Love", "AC/DC - Back in Black"],
+        api_key="k", model="m",
+    )
+    assert len(result) == 2
+    assert result[0].artist == "Led Zeppelin"
+    assert result[0].artist_ja == "レッド・ツェッペリン"
+    assert result[0].album == "Led Zeppelin II"
+    assert result[0].year == 1969
+    assert result[1].artist_ja is None
+    assert result[1].year == 1980
+
+
+def test_resolve_albums_skips_malformed_entries(mocker):
+    from moodlist.wishlist import resolve_albums
+
+    mocker.patch("moodlist.wishlist.llm.call", return_value={
+        "albums": [
+            {"artist": "Good", "artist_ja": None, "album": "OK", "year": 2000},
+            "not a dict",
+            {"album": "no artist"},
+            {"artist": "no album"},
+        ]
+    })
+    result = resolve_albums(
+        ["a", "b", "c", "d"], api_key="k", model="m",
+    )
+    assert len(result) == 1
+    assert result[0].album == "OK"
+
+
+def test_resolve_albums_returns_empty_on_empty_input():
+    from moodlist.wishlist import resolve_albums
+    # No mocker patch — should short-circuit before hitting llm.call.
+    result = resolve_albums([], api_key="k", model="m")
+    assert result == []
+
+
+def test_resolve_albums_passes_strings_in_prompt(mocker):
+    """The Haiku call must include all track strings somewhere in the user
+    message so the model has them to resolve."""
+    from moodlist.wishlist import resolve_albums
+
+    captured: dict = {}
+    def fake_call(**kwargs):
+        captured.update(kwargs)
+        return {"albums": []}
+    mocker.patch("moodlist.wishlist.llm.call", side_effect=fake_call)
+
+    resolve_albums(["Led Zeppelin - Whole Lotta Love"], api_key="k", model="m")
+    user_text = " ".join(
+        b["text"] for b in captured["user_blocks"]
+        if isinstance(b, dict) and "text" in b
+    )
+    assert "Led Zeppelin - Whole Lotta Love" in user_text

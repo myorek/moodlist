@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import llm
 from .types import WantedAlbum
 
 # ── normalization ──────────────────────────────────────────────────
@@ -243,3 +244,64 @@ class WishlistDB:
         finally:
             conn.close()
         return int(row[0])
+
+
+_RESOLVER_SYSTEM_PROMPT = """\
+You are a music-catalog resolver. For each input string of the form
+"Artist - Track Title" (or sometimes a bare title), identify:
+  - artist: canonical artist name (Latin script)
+  - artist_ja: standard Japanese katakana transliteration, or null
+    if the artist isn't commonly rendered in Japanese (AC/DC, U2)
+  - album: the canonical studio album the track appears on
+  - year: original release year of the album (not a reissue); null if unsure
+
+Deduplicate: if multiple input strings resolve to the same album,
+return ONE record. Output JSON only:
+
+  {"albums": [{"artist": string, "artist_ja": string | null,
+               "album": string, "year": int | null}, ...]}
+"""
+
+
+def resolve_albums(
+    track_strings: list[str],
+    *,
+    api_key: str,
+    model: str,
+) -> list[WantedAlbum]:
+    """Resolve a list of 'Artist - Track' strings into canonical album
+    records via a single Haiku call. Returns a deduplicated list."""
+    if not track_strings:
+        return []
+
+    user_text = (
+        "Resolve each of these track strings to its canonical album:\n\n"
+        + "\n".join(f"- {s}" for s in track_strings)
+    )
+    raw = llm.call(
+        api_key=api_key,
+        model=model,
+        system=_RESOLVER_SYSTEM_PROMPT,
+        user_blocks=[{"type": "text", "text": user_text}],
+        temperature=0.0,
+        max_tokens=2048,
+    )
+
+    out: list[WantedAlbum] = []
+    for entry in raw.get("albums", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        artist = entry.get("artist")
+        album = entry.get("album")
+        if not isinstance(artist, str) or not artist.strip():
+            continue
+        if not isinstance(album, str) or not album.strip():
+            continue
+        artist_ja_raw = entry.get("artist_ja")
+        artist_ja = artist_ja_raw if isinstance(artist_ja_raw, str) \
+            and artist_ja_raw.strip() else None
+        year_raw = entry.get("year")
+        year = year_raw if isinstance(year_raw, int) else None
+        out.append(WantedAlbum(artist=artist.strip(), artist_ja=artist_ja,
+                               album=album.strip(), year=year))
+    return out
